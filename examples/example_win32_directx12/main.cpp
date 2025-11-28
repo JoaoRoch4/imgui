@@ -9,6 +9,7 @@
 
 #include <d3d12.h>
 #include <dxgi1_4.h>
+#include <dxgi1_6.h>
 #include <tchar.h>
 
 #include "imgui.h"
@@ -60,17 +61,19 @@ struct ExampleDescriptorHeapAllocator {
   }
   void Alloc(D3D12_CPU_DESCRIPTOR_HANDLE* out_cpu_desc_handle,
              D3D12_GPU_DESCRIPTOR_HANDLE* out_gpu_desc_handle) {
+
     IM_ASSERT(FreeIndices.Size > 0);
     int idx = FreeIndices.back();
     FreeIndices.pop_back();
-    out_cpu_desc_handle->ptr = HeapStartCpu.ptr + (idx * HeapHandleIncrement);
-    out_gpu_desc_handle->ptr = HeapStartGpu.ptr + (idx * HeapHandleIncrement);
+    out_cpu_desc_handle->ptr = HeapStartCpu.ptr + static_cast<SIZE_T>(idx * HeapHandleIncrement);
+    out_gpu_desc_handle->ptr = HeapStartGpu.ptr + static_cast<SIZE_T>(idx * HeapHandleIncrement);
   }
   void Free(D3D12_CPU_DESCRIPTOR_HANDLE out_cpu_desc_handle,
             D3D12_GPU_DESCRIPTOR_HANDLE out_gpu_desc_handle) {
-    int cpu_idx = (int)((out_cpu_desc_handle.ptr - HeapStartCpu.ptr) /
+
+    int cpu_idx = static_cast<int>((out_cpu_desc_handle.ptr - HeapStartCpu.ptr) /
                         HeapHandleIncrement);
-    int gpu_idx = (int)((out_gpu_desc_handle.ptr - HeapStartGpu.ptr) /
+    int gpu_idx = static_cast<int>((out_gpu_desc_handle.ptr - HeapStartGpu.ptr) /
                         HeapHandleIncrement);
     IM_ASSERT(cpu_idx == gpu_idx);
     FreeIndices.push_back(cpu_idx);

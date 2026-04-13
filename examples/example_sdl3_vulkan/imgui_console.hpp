@@ -84,9 +84,9 @@ public:
 
 protected:
     char                           InputBuf[512];
-    ImVector<char*>                Items;
+    std::vector<char*>                Items;
     std::vector<ConsoleCommandDef> Commands;
-    ImVector<char*>                History;
+    std::vector<char*>                History;
     int                            HistoryPos;
     ImGuiTextFilter                Filter;
     bool                           AutoScroll;

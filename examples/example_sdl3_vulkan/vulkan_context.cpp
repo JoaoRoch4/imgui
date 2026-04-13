@@ -32,7 +32,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL VulkanContext::DebugReportCallback(
 }
 #endif
 
-bool VulkanContext::IsExtensionAvailable(const ImVector<VkExtensionProperties>& properties,
+bool VulkanContext::IsExtensionAvailable(const std::vector<VkExtensionProperties>& properties,
                                          const char* extension)
 {
     for (const VkExtensionProperties& p : properties)
@@ -43,7 +43,7 @@ bool VulkanContext::IsExtensionAvailable(const ImVector<VkExtensionProperties>& 
 
 // ── Setup / Cleanup ───────────────────────────────────────────────────────────
 
-void VulkanContext::Setup(ImVector<const char*> instance_extensions)
+void VulkanContext::Setup(std::vector<const char*> instance_extensions)
 {
     VkResult err;
 #ifdef IMGUI_IMPL_VULKAN_USE_VOLK
@@ -56,10 +56,10 @@ void VulkanContext::Setup(ImVector<const char*> instance_extensions)
         create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 
         uint32_t properties_count;
-        ImVector<VkExtensionProperties> properties;
+        std::vector<VkExtensionProperties> properties;
         vkEnumerateInstanceExtensionProperties(nullptr, &properties_count, nullptr);
         properties.resize(properties_count);
-        err = vkEnumerateInstanceExtensionProperties(nullptr, &properties_count, properties.Data);
+        err = vkEnumerateInstanceExtensionProperties(nullptr, &properties_count, properties.data());
         CheckVkResult(err);
 
         if (IsExtensionAvailable(properties, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME))
@@ -77,8 +77,8 @@ void VulkanContext::Setup(ImVector<const char*> instance_extensions)
         create_info.ppEnabledLayerNames = layers;
         instance_extensions.push_back("VK_EXT_debug_report");
 #endif
-        create_info.enabledExtensionCount  = static_cast<uint32_t>(instance_extensions.Size);
-        create_info.ppEnabledExtensionNames = instance_extensions.Data;
+        create_info.enabledExtensionCount  = static_cast<uint32_t>(instance_extensions.size());
+        create_info.ppEnabledExtensionNames = instance_extensions.data();
         err = vkCreateInstance(&create_info, Allocator, &Instance);
         CheckVkResult(err);
 #ifdef IMGUI_IMPL_VULKAN_USE_VOLK
@@ -107,14 +107,14 @@ void VulkanContext::Setup(ImVector<const char*> instance_extensions)
 
     // Create Logical Device (with 1 queue)
     {
-        ImVector<const char*> device_extensions;
+        std::vector<const char*> device_extensions;
         device_extensions.push_back("VK_KHR_swapchain");
 
         uint32_t properties_count;
-        ImVector<VkExtensionProperties> properties;
+        std::vector<VkExtensionProperties> properties;
         vkEnumerateDeviceExtensionProperties(PhysicalDevice, nullptr, &properties_count, nullptr);
         properties.resize(properties_count);
-        vkEnumerateDeviceExtensionProperties(PhysicalDevice, nullptr, &properties_count, properties.Data);
+        vkEnumerateDeviceExtensionProperties(PhysicalDevice, nullptr, &properties_count, properties.data());
 #ifdef VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME
         if (IsExtensionAvailable(properties, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME))
             device_extensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
@@ -129,8 +129,8 @@ void VulkanContext::Setup(ImVector<const char*> instance_extensions)
         create_info.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         create_info.queueCreateInfoCount    = static_cast<uint32_t>(IM_COUNTOF(queue_info));
         create_info.pQueueCreateInfos       = queue_info;
-        create_info.enabledExtensionCount   = static_cast<uint32_t>(device_extensions.Size);
-        create_info.ppEnabledExtensionNames = device_extensions.Data;
+        create_info.enabledExtensionCount   = static_cast<uint32_t>(device_extensions.size());
+        create_info.ppEnabledExtensionNames = device_extensions.data();
         err = vkCreateDevice(PhysicalDevice, &create_info, Allocator, &Device);
         CheckVkResult(err);
         vkGetDeviceQueue(Device, QueueFamily, 0, &Queue);

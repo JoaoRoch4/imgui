@@ -3,6 +3,7 @@
 #include "imgui.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
+#include <vector>
 
 class ImGuiLayer; // forward declaration — avoids circular include
 
@@ -20,7 +21,7 @@ public:
     void Shutdown();
 
     // Collect the Vulkan instance extensions required by SDL.
-    ImVector<const char*> GetVulkanExtensions() const;
+    std::vector<const char*> GetVulkanExtensions() const;
 
     // Create a Vulkan surface for this window.  Returns VK_NULL_HANDLE on failure.
     VkSurfaceKHR CreateVulkanSurface(VkInstance instance,

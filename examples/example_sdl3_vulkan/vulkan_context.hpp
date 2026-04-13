@@ -2,6 +2,7 @@
 
 #include "imgui.h"
 #include "imgui_impl_vulkan.h"
+#include <vector>
 
 //#define APP_USE_UNLIMITED_FRAME_RATE
 #ifdef _DEBUG
@@ -25,7 +26,7 @@ public:
     bool                     SwapChainRebuild = false;
 
     // Initialise the Vulkan instance, device, queues and descriptor pool.
-    void Setup(ImVector<const char*> instance_extensions);
+    void Setup(std::vector<const char*> instance_extensions);
 
     // Create swapchain, render pass, framebuffers for a given surface + size.
     void SetupWindow(VkSurfaceKHR surface, int width, int height);
@@ -58,7 +59,7 @@ public:
     static void CheckVkResult(VkResult err);
 
 private:
-    static bool IsExtensionAvailable(const ImVector<VkExtensionProperties>& properties,
+    static bool IsExtensionAvailable(const std::vector<VkExtensionProperties>& properties,
                                      const char* extension);
 
 #ifdef APP_USE_VULKAN_DEBUG_REPORT

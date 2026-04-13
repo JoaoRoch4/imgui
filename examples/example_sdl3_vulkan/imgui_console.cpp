@@ -53,14 +53,14 @@ ImGuiConsole::~ImGuiConsole() {
 	// Signal any running background threads that the console is gone.
 	*Alive_ = false;
 	ClearLog();
-	for (int i = 0; i < History.Size; i++)
+	for (int i = 0; i < static_cast<int>(History.size()); i++)
 		std::free(History[i]);
 }
 
 // ─── ClearLog ────────────────────────────────────────────────────────────────
 
 void ImGuiConsole::ClearLog() {
-	for (int i = 0; i < Items.Size; i++)
+	for (int i = 0; i < static_cast<int>(Items.size()); i++)
 		std::free(Items[i]);
 	Items.clear();
 	SelectedItem_ = nullptr;
@@ -99,7 +99,7 @@ void ImGuiConsole::ExecCommand(const char *command_line) {
 	// ── History (deduplicate, most-recent at end)
 	// ─────────────────────────────
 	HistoryPos = -1;
-	for (int i = History.Size - 1; i >= 0; i--)
+	for (int i = static_cast<int>(History.size()) - 1; i >= 0; i--)
 		if (Stricmp(History[i], command_line) == 0) {
 			std::free(History[i]);
 			History.erase(History.begin() + i);
@@ -252,7 +252,7 @@ void ImGuiConsole::DrawContents(const char *id) {
 									   static_cast<int>(tab - (item + 1)), item + 1);
 					ImGui::SameLine(120.0f);
 					const char *desc = tab + 1;
-					size_t dl = strlen(desc);
+					size_t dl = std::strlen(desc);
 					while (dl > 0 && (desc[dl-1] == '\n' || desc[dl-1] == '\r')) --dl;
 					ImGui::TextColored({0.4f, 1.0f, 0.4f, 1.0f}, "%.*s",
 									   static_cast<int>(dl), desc);
@@ -409,16 +409,16 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 		}
 
 		// Collect matching commands
-		ImVector<int> candidates; // indices into Commands
+		std::vector<int> candidates; // indices into Commands
 		for (int ci = 0; ci < static_cast<int>(Commands.size()); ++ci)
 			if (Strnicmp(Commands[ci].name.c_str(), word_start,
 						 static_cast<int>(word_end - word_start)) == 0)
 				candidates.push_back(ci);
 
-		if (candidates.Size == 0) {
+		if (candidates.size() == 0) {
 			AddLog("No completion for \"%.*s\"\n", static_cast<int>(word_end - word_start),
 				   word_start);
-		} else if (candidates.Size == 1) {
+		} else if (candidates.size() == 1) {
 			data->DeleteChars(static_cast<int>(word_start - data->Buf),
 							  static_cast<int>(word_end - word_start));
 			data->InsertChars(data->CursorPos, Commands[candidates[0]].name.c_str());
@@ -432,7 +432,7 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 			for (;;) {
 				int c = 0;
 				bool all_match = true;
-				for (int i = 0; i < candidates.Size && all_match; ++i) {
+				for (int i = 0; i < static_cast<int>(candidates.size()) && all_match; ++i) {
 					if (i == 0)
 						c = toupper(static_cast<unsigned char>(Commands[candidates[i]].name[match_len]));
 					else if (c == 0 ||
@@ -451,7 +451,7 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 				data->InsertChars(data->CursorPos, first, first + match_len);
 			}
 			AddLog("Possible completions:\n");
-			for (int i = 0; i < candidates.Size; ++i)
+			for (int i = 0; i < static_cast<int>(candidates.size()); ++i)
 				AddLog("\x01%s\t%s\n",
 					   Commands[candidates[i]].name.c_str(),
 					   Commands[candidates[i]].description.c_str());
@@ -460,12 +460,12 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 		const int prev = HistoryPos;
 		if (data->EventKey == ImGuiKey_UpArrow) {
 			if (HistoryPos == -1)
-				HistoryPos = History.Size - 1;
+				HistoryPos = static_cast<int>(History.size()) - 1;
 			else if (HistoryPos > 0)
 				--HistoryPos;
 		} else if (data->EventKey == ImGuiKey_DownArrow) {
 			if (HistoryPos != -1)
-				if (++HistoryPos >= History.Size)
+				if (++HistoryPos >= static_cast<int>(History.size()))
 					HistoryPos = -1;
 		}
 		if (prev != HistoryPos) {
@@ -570,8 +570,8 @@ void ConsoleCommands::CmdHelp(const ConsoleCommandArgs & /*a*/) {
 // ── HISTORY ──────────────────────────────────────────────────────────────────
 
 void ConsoleCommands::CmdHistory(const ConsoleCommandArgs & /*a*/) {
-	int first = History.Size - 10;
-	for (int i = (first < 0 ? 0 : first); i < History.Size; ++i)
+	int first = static_cast<int>(History.size()) - 10;
+	for (int i = (first < 0 ? 0 : first); i < static_cast<int>(History.size()); ++i)
 		AddLog("%3d: %s\n", i, History[i]);
 }
 

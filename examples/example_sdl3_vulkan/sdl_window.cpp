@@ -35,9 +35,9 @@ void SDLWindow::Shutdown()
     SDL_Quit();
 }
 
-ImVector<const char*> SDLWindow::GetVulkanExtensions() const
+std::vector<const char*> SDLWindow::GetVulkanExtensions() const
 {
-    ImVector<const char*> extensions;
+    std::vector<const char*> extensions;
     uint32_t count = 0;
     const char* const* sdl_extensions = SDL_Vulkan_GetInstanceExtensions(&count);
     for (uint32_t n = 0; n < count; n++)

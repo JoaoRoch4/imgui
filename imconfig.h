@@ -20,12 +20,8 @@
 // - Compiling with NDEBUG will usually strip out assert() to nothing, which is NOT recommended because we use asserts to notify of programmer mistakes.
 //#define IM_ASSERT(_EXPR)  MyAssert(_EXPR)
 //#define IM_ASSERT(_EXPR)  ((void)(_EXPR))     // Disable asserts
-// Clang/GCC: break into debugger on assertion failure instead of calling abort().
-#if defined(__clang__)
-//#    define IM_ASSERT(_EXPR) do { if (!(_EXPR)) { assert(_EXPR); } } while(0)
-#elif defined(__GNUC__)
-#    define IM_ASSERT(_EXPR) do { if (!(_EXPR)) { __builtin_trap(); } } while(0)
-#endif
+// Clang: break into debugger on assertion failure (SIGTRAP, recoverable by debugger).
+#define IM_ASSERT(_EXPR) do { if (!(_EXPR)) __builtin_debugtrap(); } while(0)
 
 //---- Define attributes of all API symbols declarations, e.g. for DLL under Windows
 // Using Dear ImGui via a shared library is not recommended, because of function call overhead and because we don't guarantee backward nor forward ABI compatibility.
@@ -137,11 +133,7 @@
 // (use 'Metrics->Tools->Item Picker' to pick widgets with the mouse and break into them for easy debugging.)
 //#define IM_DEBUG_BREAK  IM_ASSERT(0)
 //#define IM_DEBUG_BREAK  __debugbreak()
-#if defined(__clang__)
-#    define IM_DEBUG_BREAK  __builtin_debugtrap
-#elif defined(__GNUC__)
-#    define IM_DEBUG_BREAK  __builtin_trap
-#endif
+#define IM_DEBUG_BREAK  __builtin_debugtrap
 
 //---- Debug Tools: Enable highlight ID conflicts _before_ hovering items. When io.ConfigDebugHighlightIdConflicts is set.
 // (THIS WILL SLOW DOWN DEAR IMGUI. Only use occasionally and disable after use)

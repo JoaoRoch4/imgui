@@ -152,6 +152,160 @@ async def test_ask_imgui_expert():
         fail("reset_session removes session", "still present")
 
 
+# ── clang-tidy tool tests ─────────────────────────────────────────────────────
+
+async def test_clang_tidy_tools():
+    print("\n── clang-tidy tools ─────────────────────────────────")
+
+    # 1. search_clang_tidy: known category returns results
+    result = await srv.search_clang_tidy("modernize")
+    if isinstance(result, str) and "modernize" in result.lower():
+        ok("search_clang_tidy('modernize') → contains modernize checks")
+    else:
+        fail("search_clang_tidy('modernize') → contains modernize checks",
+             repr(result)[:120])
+
+    # 2. search_clang_tidy: bugprone category
+    result = await srv.search_clang_tidy("bugprone")
+    if isinstance(result, str) and "bugprone" in result.lower():
+        ok("search_clang_tidy('bugprone') → contains bugprone checks")
+    else:
+        fail("search_clang_tidy('bugprone') → contains bugprone checks",
+             repr(result)[:120])
+
+    # 3. search_clang_tidy: no-match returns informative message (not an exception)
+    result = await srv.search_clang_tidy("zzz_nonexistent_xyzzy_check")
+    if isinstance(result, str) and ("not found" in result.lower() or "no " in result.lower()):
+        ok("search_clang_tidy(nonexistent) → informative 'not found' message")
+    else:
+        fail("search_clang_tidy(nonexistent) → informative 'not found' message",
+             repr(result)[:120])
+
+    # 4. lookup_clang_tidy: well-known check returns non-empty docs
+    result = await srv.lookup_clang_tidy("modernize-use-nullptr")
+    if isinstance(result, str) and len(result) > 100 and "modernize-use-nullptr" in result:
+        ok("lookup_clang_tidy('modernize-use-nullptr') → non-empty documentation")
+    else:
+        fail("lookup_clang_tidy('modernize-use-nullptr') → non-empty documentation",
+             repr(result)[:120])
+
+    # 5. lookup_clang_tidy: doc text contains URL
+    if isinstance(result, str) and "clang.llvm.org" in result:
+        ok("lookup_clang_tidy result contains canonical URL")
+    else:
+        fail("lookup_clang_tidy result contains canonical URL", repr(result)[:80])
+
+    # 6. lookup_clang_tidy: unknown check returns a clear error (not an exception)
+    result = await srv.lookup_clang_tidy("zzznonexistent-check-name")
+    if isinstance(result, str) and (
+        "cannot resolve" in result.lower() or "failed" in result.lower()
+        or "not resolve" in result.lower()
+    ):
+        ok("lookup_clang_tidy(unknown) → clear error message")
+    else:
+        fail("lookup_clang_tidy(unknown) → clear error message", repr(result)[:120])
+
+    # 7. interpret_clang_tidy: standard diagnostic with [check-name]
+    diag = "warning: use std::make_unique instead [modernize-make-unique]"
+    result = await srv.interpret_clang_tidy(diag)
+    if (
+        isinstance(result, str)
+        and "modernize-make-unique" in result
+        and "clang.llvm.org" in result
+    ):
+        ok("interpret_clang_tidy: extracts check name + URL from standard diagnostic")
+    else:
+        fail("interpret_clang_tidy: extracts check name + URL", repr(result)[:120])
+
+    # 8. interpret_clang_tidy: diagnostic with path prefix stripped
+    diag2 = "/home/user/test.cpp:42:10: warning: pointer arithmetic [cppcoreguidelines-pro-bounds-pointer-arithmetic]"
+    result2 = await srv.interpret_clang_tidy(diag2)
+    if isinstance(result2, str) and "cppcoreguidelines-pro-bounds-pointer-arithmetic" in result2:
+        ok("interpret_clang_tidy: handles 'file:line:col: warning:' prefix")
+    else:
+        fail("interpret_clang_tidy: handles file:line:col prefix", repr(result2)[:120])
+
+    # 9. interpret_clang_tidy: diagnostic with no [check-name] → clear error
+    result3 = await srv.interpret_clang_tidy("warning: something went wrong here")
+    if isinstance(result3, str) and (
+        "no clang-tidy" in result3.lower() or "not found" in result3.lower()
+        or "expected" in result3.lower()
+    ):
+        ok("interpret_clang_tidy: no [check-name] → informative error")
+    else:
+        fail("interpret_clang_tidy: no [check-name] → informative error", repr(result3)[:120])
+
+
+# ── process / debugger tool tests ───────────────────────────────────────────
+
+async def test_process_tools():
+    print("\n── process / debugger tools ─────────────────────────────")
+
+    # get_cpp_process_state — no process running: expect informative message
+    result = srv.get_cpp_process_state()
+    if isinstance(result, str) and len(result) > 5:
+        if "example_sdl3_vulkan" in result:
+            ok("get_cpp_process_state() → returns a string")
+        else:
+            fail("get_cpp_process_state() → mentions target process", repr(result)[:120])
+    else:
+        fail("get_cpp_process_state() → returns a string", repr(result)[:80])
+
+    # get_cpp_process_state — no-process path returns error message (not an exception)
+    if "No" in result or "Process PID" in result:
+        ok("get_cpp_process_state() → graceful no-process message")
+    else:
+        fail("get_cpp_process_state() → graceful no-process message", repr(result)[:120])
+
+    # get_cpp_thread_backtraces — no process (pid=0 auto-detect)
+    try:
+        result2 = await srv.get_cpp_thread_backtraces(pid=0)
+        if isinstance(result2, str) and len(result2) > 5:
+            ok("get_cpp_thread_backtraces(pid=0) → returns a string",
+               result2[:80].replace("\n", " "))
+        else:
+            fail("get_cpp_thread_backtraces(pid=0) → returns a string", repr(result2)[:80])
+    except Exception as e:
+        fail("get_cpp_thread_backtraces(pid=0) → no exception", str(e))
+
+    # analyze_core_dump — no core file: expect informative message (not an exception)
+    try:
+        result3 = await srv.analyze_core_dump(core_path="")
+        if isinstance(result3, str) and (
+            "core" in result3.lower() or "not found" in result3.lower()
+            or "ulimit" in result3.lower()
+        ):
+            ok("analyze_core_dump('') → informative no-core message")
+        else:
+            fail("analyze_core_dump('') → informative no-core message", repr(result3)[:120])
+    except Exception as e:
+        fail("analyze_core_dump('') → no exception", str(e))
+
+    # analyze_core_dump — nonexistent explicit path
+    try:
+        result4 = await srv.analyze_core_dump(core_path="/nonexistent/core.dump")
+        if isinstance(result4, str) and (
+            "not found" in result4.lower() or "no such" in result4.lower()
+            or "/nonexistent" in result4
+        ):
+            ok("analyze_core_dump(nonexistent path) → file-not-found message")
+        else:
+            fail("analyze_core_dump(nonexistent path) → file-not-found message", repr(result4)[:120])
+    except Exception as e:
+        fail("analyze_core_dump(nonexistent path) → no exception", str(e))
+
+    # monitor_cpp_process — no process: should return immediately with error message
+    try:
+        result5 = await srv.monitor_cpp_process(interval_ms=100, duration_ms=200)
+        if isinstance(result5, str) and len(result5) > 5:
+            ok("monitor_cpp_process() → returns a string",
+               result5[:80].replace("\n", " "))
+        else:
+            fail("monitor_cpp_process() → returns a string", repr(result5)[:80])
+    except Exception as e:
+        fail("monitor_cpp_process() → no exception", str(e))
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 async def main():
@@ -161,6 +315,8 @@ async def main():
     await test_list_sessions()
     await test_reset_session()
     await test_ask_imgui_expert()
+    await test_clang_tidy_tools()
+    await test_process_tools()
 
     total = passed + failed
     print("\n" + "─" * 50)

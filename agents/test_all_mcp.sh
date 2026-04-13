@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # test_all_mcp.sh — Global MCP server test suite
-# Tests both MCP servers registered in ~/.config/Code/User/mcp.json
+# Tests both MCP servers registered in .vscode/mcp.json
 # Usage: bash test_all_mcp.sh
 
 set -euo pipefail
 
 NODE="/home/joao/.nvm/versions/node/v24.14.1/bin/node"
 PYTHON="/home/joao/miniconda3/envs/imgui-cpp/bin/python"
-CPP_REF_DIR="/home/joao/vscode/imgui/agents/cpp-reference"
-EXPERT_DIR="/home/joao/vscode/imgui/agents/imgui-cpp-expert"
+CPP_REF_DIR="/home/joao/vscode/imgui-1/agents/cpp-reference"
+EXPERT_DIR="/home/joao/vscode/imgui-1/agents/imgui-cpp-expert"
 
 PASS=0
 FAIL=0

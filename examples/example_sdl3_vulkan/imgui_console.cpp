@@ -1,0 +1,956 @@
+#include "imgui_console.hpp"
+
+#include <algorithm>    // std::max
+#include <cctype>       // toupper
+#include <cerrno>       // errno
+#include <cstdarg>      // va_list
+#include <cstdio>       // FILE, popen, pclose, fgets, sprintf
+#include <cstdlib>      // malloc, free
+#include <cstring>      // strlen, strcpy, strstr, strncmp, memcpy, strerror
+#include <atomic>       // std::atomic
+#include <fstream>      // std::ifstream
+#include <memory>       // std::shared_ptr
+#include <mutex>        // std::mutex, std::lock_guard
+#include <string>       // std::string, std::stoi
+#include <thread>       // std::thread
+#include <vector>       // std::vector
+#include <fcntl.h>      // posix_openpt, O_RDWR, O_NOCTTY
+#include <poll.h>       // poll, pollfd
+#include <sys/ioctl.h>  // ioctl, TIOCSCTTY
+#include <sys/types.h>  // pid_t
+#include <sys/wait.h>   // waitpid, WIFEXITED, WEXITSTATUS, WIFSIGNALED, WTERMSIG
+#include <unistd.h>     // fork, setsid, dup2, close, read, write, execl, _exit
+
+// ══════════════════════════════════════════════════════════════════════════════
+// BashSession — PTY state shared between main thread and worker thread
+// ══════════════════════════════════════════════════════════════════════════════
+
+struct BashSession
+{
+    std::atomic<int>  master_fd{-1};      // master PTY fd; -1 = already closed
+    std::atomic<bool> running{true};      // worker thread is alive
+    std::atomic<bool> needs_input{false}; // password prompt has been detected
+    char              password_buf[256]{};// filled by the main thread on Enter
+    std::mutex        fd_mutex;           // serialises write (main) vs close (worker)
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ImGuiConsole — core
+// ══════════════════════════════════════════════════════════════════════════════
+
+ImGuiConsole::ImGuiConsole()
+{
+    memset(InputBuf, 0, sizeof(InputBuf));
+    HistoryPos    = -1;
+    AutoScroll    = true;
+    ScrollToBottom = false;
+    AddLog("Console ready. Type HELP for a list of commands.\n");
+}
+
+ImGuiConsole::~ImGuiConsole()
+{
+    // Signal any running background threads that the console is gone.
+    *Alive_ = false;
+    ClearLog();
+    for (int i = 0; i < History.Size; i++)
+        free(History[i]);
+}
+
+// ─── ClearLog ────────────────────────────────────────────────────────────────
+
+void ImGuiConsole::ClearLog()
+{
+    for (int i = 0; i < Items.Size; i++)
+        free(Items[i]);
+    Items.clear();
+}
+
+// ─── AddLog ──────────────────────────────────────────────────────────────────
+
+void ImGuiConsole::AddLog(const char* fmt, ...)
+{
+    char    buf[4096];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, IM_ARRAYSIZE(buf), fmt, args);
+    buf[IM_ARRAYSIZE(buf) - 1] = '\0';
+    va_end(args);
+    Items.push_back(Strdup(buf));
+}
+
+// ─── RegisterCommand ─────────────────────────────────────────────────────────
+
+void ImGuiConsole::RegisterCommand(const char* name, const char* description, ConsoleCommandFn fn)
+{
+    ConsoleCommandDef def;
+    def.description = description;
+    def.fn          = std::move(fn);
+    def.name        = name;
+    for (char& c : def.name)
+        c = (char)toupper((unsigned char)c);
+    Commands.push_back(std::move(def));
+}
+
+// ─── ExecCommand ─────────────────────────────────────────────────────────────
+
+void ImGuiConsole::ExecCommand(const char* command_line)
+{
+    AddLog("# %s\n", command_line);
+
+    // ── History (deduplicate, most-recent at end) ─────────────────────────────
+    HistoryPos = -1;
+    for (int i = History.Size - 1; i >= 0; i--)
+        if (Stricmp(History[i], command_line) == 0)
+        {
+            free(History[i]);
+            History.erase(History.begin() + i);
+            break;
+        }
+    History.push_back(Strdup(command_line));
+
+    // ── Tokenise on whitespace ────────────────────────────────────────────────
+    std::vector<std::string> tokens;
+    {
+        const char* p = command_line;
+        while (*p)
+        {
+            while (*p == ' ' || *p == '\t') ++p;
+            if (!*p) break;
+            const char* start = p;
+            while (*p && *p != ' ' && *p != '\t') ++p;
+            tokens.emplace_back(start, p - start);
+        }
+    }
+    if (tokens.empty())
+        return;
+
+    // Upper-case command name
+    for (char& c : tokens[0])
+        c = (char)toupper((unsigned char)c);
+
+    // raw_args: everything after the command token, leading whitespace stripped
+    const char* raw_start = command_line;
+    while (*raw_start && *raw_start != ' ' && *raw_start != '\t') ++raw_start;
+    while (*raw_start == ' ' || *raw_start == '\t')                ++raw_start;
+
+    std::vector<std::string>     args_vec(tokens.begin() + 1, tokens.end());
+    std::span<const std::string> args_span(args_vec);
+
+    ConsoleCommandArgs cargs {
+        std::string_view(tokens[0]),
+        args_span,
+        std::string_view(raw_start)
+    };
+
+    // ── Dispatch ──────────────────────────────────────────────────────────────
+    for (auto& cmd : Commands)
+    {
+        if (cmd.name == tokens[0])
+        {
+            cmd.fn(*this, cargs);
+            ScrollToBottom = true;
+            return;
+        }
+    }
+
+    AddLog("[error] Unknown command '%s'. Type HELP for a list.\n", tokens[0].c_str());
+    ScrollToBottom = true;
+}
+
+// ─── Draw ────────────────────────────────────────────────────────────────────
+
+// ─── AddLogThreadSafe ────────────────────────────────────────────────────────
+
+void ImGuiConsole::AddLogThreadSafe(std::string line)
+{
+    std::lock_guard<std::mutex> lk(PendingMutex_);
+    PendingLines_.push_back(std::move(line));
+}
+
+// ─── FlushPendingLogs ─────────────────────────────────────────────────────────
+
+void ImGuiConsole::FlushPendingLogs()
+{
+    std::vector<std::string> tmp;
+    {
+        std::lock_guard<std::mutex> lk(PendingMutex_);
+        tmp.swap(PendingLines_);
+    }
+    for (auto& line : tmp)
+        AddLog("%s", line.c_str());
+}
+
+// ─── Draw ─────────────────────────────────────────────────────────────────────
+
+void ImGuiConsole::DrawContents(const char* id)
+{
+    FlushPendingLogs();
+    ImGui::PushID(id);
+
+    // ── Toolbar ───────────────────────────────────────────────────────────────
+    if (ImGui::SmallButton("Clear"))    ClearLog();
+    ImGui::SameLine();
+    bool copy_to_clipboard = ImGui::SmallButton("Copy");
+    ImGui::SameLine(0, 12);
+    ImGui::Text("Filter:");
+    ImGui::SameLine();
+    Filter.Draw("##filter", 180);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("X")) Filter.Clear();
+    ImGui::SameLine();
+    ImGui::Checkbox("Auto-scroll", &AutoScroll);
+
+    ImGui::Separator();
+
+    // ── Scrolling log region ──────────────────────────────────────────────────
+    const float footer = ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
+    if (ImGui::BeginChild("##log", ImVec2(0, -footer), ImGuiChildFlags_None,
+                          ImGuiWindowFlags_HorizontalScrollbar))
+    {
+        if (ImGui::BeginPopupContextWindow())
+        {
+            if (ImGui::Selectable("Clear")) ClearLog();
+            ImGui::EndPopup();
+        }
+
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 1));
+        if (copy_to_clipboard)
+            ImGui::LogToClipboard();
+
+        for (const char* item : Items)
+        {
+            if (!Filter.PassFilter(item))
+                continue;
+
+            ImVec4 color   = {};
+            bool has_color = false;
+            if      (strstr(item,   "[error]"))      { color = { 1.0f, 0.4f, 0.4f, 1.0f }; has_color = true; }
+            else if (strstr(item,   "[warn]"))        { color = { 1.0f, 1.0f, 0.4f, 1.0f }; has_color = true; }
+            else if (strncmp(item,  "# ", 2) == 0)   { color = { 1.0f, 0.8f, 0.6f, 1.0f }; has_color = true; }
+            else if (strncmp(item,  "$ ", 2) == 0)   { color = { 0.4f, 1.0f, 0.4f, 1.0f }; has_color = true; }
+
+            if (has_color) ImGui::PushStyleColor(ImGuiCol_Text, color);
+            ImGui::TextUnformatted(item);
+            if (has_color) ImGui::PopStyleColor();
+        }
+
+        if (copy_to_clipboard)
+            ImGui::LogFinish();
+
+        if (ScrollToBottom || (AutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()))
+            ImGui::SetScrollHereY(1.0f);
+        ScrollToBottom = false;
+
+        ImGui::PopStyleVar();
+    }
+    ImGui::EndChild();
+
+    ImGui::Separator();
+
+    // ── Input line ────────────────────────────────────────────────────────────
+    // When an active BASH job needs a password we switch the input field into
+    // masked mode and route text directly to the process PTY instead of the
+    // command dispatcher.
+    bool reclaim_focus = false;
+
+    std::shared_ptr<BashSession> active_session;
+    {
+        std::lock_guard<std::mutex> lk(BashSessionMutex_);
+        active_session = ActiveBashSession_;
+    }
+
+    if (active_session && active_session->needs_input.load())
+    {
+        // ── Password mode ─────────────────────────────────────────────────────
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "(password)");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::InputText("##pw_input", active_session->password_buf,
+                             sizeof(active_session->password_buf),
+                             ImGuiInputTextFlags_EnterReturnsTrue |
+                             ImGuiInputTextFlags_Password         |
+                             ImGuiInputTextFlags_EscapeClearsAll))
+        {
+            // Send password + newline to child process via PTY
+            std::string pw(active_session->password_buf);
+            pw += '\n';
+            {
+                std::lock_guard<std::mutex> lk(active_session->fd_mutex);
+                int fd = active_session->master_fd.load();
+                if (fd >= 0) write(fd, pw.c_str(), pw.size());
+            }
+            memset(active_session->password_buf, 0,
+                   sizeof(active_session->password_buf));
+            active_session->needs_input.store(false);
+            reclaim_focus = true;
+        }
+        ImGui::SetItemDefaultFocus();
+        if (reclaim_focus) ImGui::SetKeyboardFocusHere(-1);
+    }
+    else
+    {
+        // ── Normal command mode ───────────────────────────────────────────────
+        ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue
+                                  | ImGuiInputTextFlags_EscapeClearsAll
+                                  | ImGuiInputTextFlags_CallbackCompletion
+                                  | ImGuiInputTextFlags_CallbackHistory;
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::InputText("##input", InputBuf, IM_ARRAYSIZE(InputBuf), flags,
+                             &TextEditCallbackStub, this))
+        {
+            Strtrim(InputBuf);
+            if (InputBuf[0])
+                ExecCommand(InputBuf);
+            InputBuf[0] = '\0';
+            reclaim_focus = true;
+        }
+        ImGui::SetItemDefaultFocus();
+        if (reclaim_focus)
+            ImGui::SetKeyboardFocusHere(-1);
+    }
+
+    ImGui::PopID();
+}
+
+void ImGuiConsole::Draw(const char* title, bool* p_open)
+{
+    ImGui::SetNextWindowSize(ImVec2(640, 480), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin(title, p_open))
+    {
+        ImGui::End();
+        return;
+    }
+    char uid[24];
+    snprintf(uid, sizeof(uid), "%p", static_cast<void*>(this));
+    DrawContents(uid);
+    ImGui::End();
+}
+
+// ─── TextEditCallback ─────────────────────────────────────────────────────────
+
+int ImGuiConsole::TextEditCallbackStub(ImGuiInputTextCallbackData* data)
+{
+    return static_cast<ImGuiConsole*>(data->UserData)->TextEditCallback(data);
+}
+
+int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData* data)
+{
+    if (data->EventFlag == ImGuiInputTextFlags_CallbackCompletion)
+    {
+        // Identify the word being completed
+        const char* word_end   = data->Buf + data->CursorPos;
+        const char* word_start = word_end;
+        while (word_start > data->Buf)
+        {
+            char c = word_start[-1];
+            if (c == ' ' || c == '\t' || c == ',' || c == ';') break;
+            --word_start;
+        }
+
+        // Collect matching commands
+        ImVector<const char*> candidates;
+        for (const auto& cmd : Commands)
+            if (Strnicmp(cmd.name.c_str(), word_start, (int)(word_end - word_start)) == 0)
+                candidates.push_back(cmd.name.c_str());
+
+        if (candidates.Size == 0)
+        {
+            AddLog("No completion for \"%.*s\"\n", (int)(word_end - word_start), word_start);
+        }
+        else if (candidates.Size == 1)
+        {
+            data->DeleteChars((int)(word_start - data->Buf), (int)(word_end - word_start));
+            data->InsertChars(data->CursorPos, candidates[0]);
+            data->InsertChars(data->CursorPos, " ");
+        }
+        else
+        {
+            // Expand to longest common prefix then list candidates
+            int match_len = (int)(word_end - word_start);
+            for (;;)
+            {
+                int  c         = 0;
+                bool all_match = true;
+                for (int i = 0; i < candidates.Size && all_match; ++i)
+                {
+                    if (i == 0)
+                        c = toupper((unsigned char)candidates[i][match_len]);
+                    else if (c == 0 || c != toupper((unsigned char)candidates[i][match_len]))
+                        all_match = false;
+                }
+                if (!all_match) break;
+                ++match_len;
+            }
+            if (match_len > (int)(word_end - word_start))
+            {
+                data->DeleteChars((int)(word_start - data->Buf), (int)(word_end - word_start));
+                data->InsertChars(data->CursorPos, candidates[0], candidates[0] + match_len);
+            }
+            AddLog("Possible completions:\n");
+            for (int i = 0; i < candidates.Size; ++i)
+                AddLog("  %s\n", candidates[i]);
+        }
+    }
+    else if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory)
+    {
+        const int prev = HistoryPos;
+        if (data->EventKey == ImGuiKey_UpArrow)
+        {
+            if (HistoryPos == -1)    HistoryPos = History.Size - 1;
+            else if (HistoryPos > 0) --HistoryPos;
+        }
+        else if (data->EventKey == ImGuiKey_DownArrow)
+        {
+            if (HistoryPos != -1)
+                if (++HistoryPos >= History.Size)
+                    HistoryPos = -1;
+        }
+        if (prev != HistoryPos)
+        {
+            const char* entry = HistoryPos >= 0 ? History[HistoryPos] : "";
+            data->DeleteChars(0, data->BufTextLen);
+            data->InsertChars(0, entry);
+        }
+    }
+    return 0;
+}
+
+// ─── Static helpers ──────────────────────────────────────────────────────────
+
+int ImGuiConsole::Stricmp(const char* s1, const char* s2)
+{
+    int d;
+    while ((d = toupper((unsigned char)*s2) - toupper((unsigned char)*s1)) == 0 && *s1)
+        ++s1, ++s2;
+    return d;
+}
+
+int ImGuiConsole::Strnicmp(const char* s1, const char* s2, int n)
+{
+    int d = 0;
+    while (n > 0 && (d = toupper((unsigned char)*s2) - toupper((unsigned char)*s1)) == 0 && *s1)
+        --n, ++s1, ++s2;
+    return d;
+}
+
+char* ImGuiConsole::Strdup(const char* s)
+{
+    IM_ASSERT(s);
+    size_t len = strlen(s) + 1;
+    void*  buf = malloc(len);
+    IM_ASSERT(buf);
+    return static_cast<char*>(memcpy(buf, s, len));
+}
+
+void ImGuiConsole::Strtrim(char* s)
+{
+    char* end = s + strlen(s);
+    while (end > s && end[-1] == ' ') --end;
+    *end = '\0';
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ConsoleCommands — constructor: register all built-in commands
+// ══════════════════════════════════════════════════════════════════════════════
+
+ConsoleCommands::ConsoleCommands()
+{
+    // Bind a member function pointer to a ConsoleCommandFn compatible lambda.
+    auto bind = [this](void (ConsoleCommands::*m)(const ConsoleCommandArgs&))
+    {
+        return [this, m](ImGuiConsole& /*c*/, const ConsoleCommandArgs& a)
+        {
+            (this->*m)(a);
+        };
+    };
+
+    RegisterCommand("HELP",    "List all registered commands",                bind(&ConsoleCommands::CmdHelp));
+    RegisterCommand("HISTORY", "Print the last 10 history entries",           bind(&ConsoleCommands::CmdHistory));
+    RegisterCommand("CLEAR",   "Erase the console log",                       bind(&ConsoleCommands::CmdClear));
+    RegisterCommand("ECHO",    "Echo text: ECHO <text…>",                     bind(&ConsoleCommands::CmdEcho));
+    RegisterCommand("FPS",     "Print current framerate",                     bind(&ConsoleCommands::CmdFps));
+    RegisterCommand("STYLE",   "Switch theme: STYLE DARK|LIGHT|CLASSIC",     bind(&ConsoleCommands::CmdStyle));
+    RegisterCommand("DEMO",    "Toggle demo window: DEMO ON|OFF",             bind(&ConsoleCommands::CmdDemo));
+    RegisterCommand("LOG",     "Tail debug log: LOG [n=20]",                 bind(&ConsoleCommands::CmdLog));
+    RegisterCommand("SET",     "Set variable: SET <name> <value…>",          bind(&ConsoleCommands::CmdSet));
+    RegisterCommand("GET",     "Get variable: GET [name]",                   bind(&ConsoleCommands::CmdGet));
+    RegisterCommand("BASH",    "Run shell command: BASH <cmd> [args…]",      bind(&ConsoleCommands::CmdBash));
+    RegisterCommand("COPILOT", "Ask GitHub Copilot CLI: COPILOT <question…>", bind(&ConsoleCommands::CmdCopilot));
+    RegisterCommand("QUIT",    "Exit the application",                        bind(&ConsoleCommands::CmdQuit));
+}
+
+// ── HELP ─────────────────────────────────────────────────────────────────────
+
+void ConsoleCommands::CmdHelp(const ConsoleCommandArgs& /*a*/)
+{
+    AddLog("Available commands:\n");
+    for (const auto& cmd : Commands)
+        AddLog("  %-12s  %s\n", cmd.name.c_str(), cmd.description.c_str());
+}
+
+// ── HISTORY ──────────────────────────────────────────────────────────────────
+
+void ConsoleCommands::CmdHistory(const ConsoleCommandArgs& /*a*/)
+{
+    int first = History.Size - 10;
+    for (int i = (first < 0 ? 0 : first); i < History.Size; ++i)
+        AddLog("%3d: %s\n", i, History[i]);
+}
+
+// ── CLEAR ────────────────────────────────────────────────────────────────────
+
+void ConsoleCommands::CmdClear(const ConsoleCommandArgs& /*a*/)
+{
+    ClearLog();
+}
+
+// ── ECHO ─────────────────────────────────────────────────────────────────────
+
+void ConsoleCommands::CmdEcho(const ConsoleCommandArgs& a)
+{
+    if (a.raw_args.empty())
+        AddLog("\n");
+    else
+        AddLog("%.*s\n", (int)a.raw_args.size(), a.raw_args.data());
+}
+
+// ── FPS ──────────────────────────────────────────────────────────────────────
+
+void ConsoleCommands::CmdFps(const ConsoleCommandArgs& /*a*/)
+{
+    const ImGuiIO& io = ImGui::GetIO();
+    AddLog("%.1f FPS  (%.3f ms/frame)\n", io.Framerate, 1000.0f / io.Framerate);
+}
+
+// ── STYLE ────────────────────────────────────────────────────────────────────
+
+void ConsoleCommands::CmdStyle(const ConsoleCommandArgs& a)
+{
+    if (a.args.empty())
+    {
+        AddLog("[error] Usage: STYLE DARK|LIGHT|CLASSIC\n");
+        return;
+    }
+    std::string which = a.args[0];
+    for (char& c : which) c = (char)toupper((unsigned char)c);
+
+    if      (which == "DARK")    { ImGui::StyleColorsDark();    if (OnStyleChange) OnStyleChange(0); AddLog("Style: Dark\n");    }
+    else if (which == "LIGHT")   { ImGui::StyleColorsLight();   if (OnStyleChange) OnStyleChange(1); AddLog("Style: Light\n");   }
+    else if (which == "CLASSIC") { ImGui::StyleColorsClassic(); if (OnStyleChange) OnStyleChange(2); AddLog("Style: Classic\n"); }
+    else AddLog("[error] Unknown style '%s'. Use DARK, LIGHT or CLASSIC.\n", a.args[0].c_str());
+}
+
+// ── DEMO ─────────────────────────────────────────────────────────────────────
+
+void ConsoleCommands::CmdDemo(const ConsoleCommandArgs& a)
+{
+    if (a.args.empty())
+    {
+        AddLog("[error] Usage: DEMO ON|OFF\n");
+        return;
+    }
+    std::string which = a.args[0];
+    for (char& c : which) c = (char)toupper((unsigned char)c);
+
+    if      (which == "ON")  { if (OnDemoToggle) OnDemoToggle(true);  AddLog("Demo window: ON\n");  }
+    else if (which == "OFF") { if (OnDemoToggle) OnDemoToggle(false); AddLog("Demo window: OFF\n"); }
+    else AddLog("[error] Unknown argument '%s'. Use ON or OFF.\n", a.args[0].c_str());
+}
+
+// ── LOG ──────────────────────────────────────────────────────────────────────
+
+void ConsoleCommands::CmdLog(const ConsoleCommandArgs& a)
+{
+    int n = 20;
+    if (!a.args.empty())
+    {
+        try   { n = std::stoi(a.args[0]); }
+        catch (...) { AddLog("[error] LOG: invalid line count\n"); return; }
+    }
+    if (n <= 0 || n > 1000)
+    {
+        AddLog("[error] LOG: line count must be 1-1000\n");
+        return;
+    }
+
+    std::ifstream f("/tmp/imgui_debug.log");
+    if (!f)
+    {
+        AddLog("[error] Cannot open /tmp/imgui_debug.log\n");
+        return;
+    }
+
+    std::vector<std::string> lines;
+    lines.reserve(256);
+    std::string line;
+    while (std::getline(f, line))
+        lines.push_back(std::move(line));
+
+    int start = std::max(0, (int)lines.size() - n);
+    AddLog("── /tmp/imgui_debug.log (last %d lines) ──\n", (int)lines.size() - start);
+    for (int i = start; i < (int)lines.size(); ++i)
+        AddLog("%s\n", lines[i].c_str());
+}
+
+// ── SET ──────────────────────────────────────────────────────────────────────
+
+void ConsoleCommands::CmdSet(const ConsoleCommandArgs& a)
+{
+    if (a.args.size() < 2)
+    {
+        AddLog("[error] Usage: SET <name> <value>\n");
+        return;
+    }
+    std::string value;
+    for (size_t i = 1; i < a.args.size(); ++i)
+    {
+        if (i > 1) value += ' ';
+        value += a.args[i];
+    }
+    Variables[a.args[0]] = value;
+    AddLog("SET %s = %s\n", a.args[0].c_str(), value.c_str());
+}
+
+// ── GET ──────────────────────────────────────────────────────────────────────
+
+void ConsoleCommands::CmdGet(const ConsoleCommandArgs& a)
+{
+    if (a.args.empty())
+    {
+        if (Variables.empty()) { AddLog("(no variables set)\n"); return; }
+        for (const auto& [k, v] : Variables)
+            AddLog("  %s = %s\n", k.c_str(), v.c_str());
+        return;
+    }
+    auto it = Variables.find(a.args[0]);
+    if (it == Variables.end())
+        AddLog("[error] Undefined variable '%s'\n", a.args[0].c_str());
+    else
+        AddLog("%s = %s\n", a.args[0].c_str(), it->second.c_str());
+}
+
+// ── QUIT ─────────────────────────────────────────────────────────────────────
+
+void ConsoleCommands::CmdQuit(const ConsoleCommandArgs& /*a*/)
+{
+    AddLog("Quitting…\n");
+    if (OnQuit) OnQuit();
+}
+
+// ── BASH ─────────────────────────────────────────────────────────────────────
+// Opens a PTY, forks /bin/sh with the PTY slave as its controlling terminal,
+// and reads output on a detached thread.  Because the child sees a real TTY,
+// tools like sudo can prompt for a password; the prompt is detected in the
+// output stream and the console input switches to masked mode so the user can
+// type the password without it appearing in the log.
+//
+// This is intentionally developer-only — it runs with the same privileges as
+// the parent process.  Do not expose to untrusted input.
+
+void ConsoleCommands::CmdBash(const ConsoleCommandArgs& a)
+{
+    if (a.raw_args.empty())
+    {
+        AddLog("[error] Usage: BASH <shell command>\n");
+        return;
+    }
+
+    std::string cmd(a.raw_args);
+    std::shared_ptr<std::atomic<bool>> alive = Alive_;
+
+    // ── Open master PTY ───────────────────────────────────────────────────────
+    int master_fd = posix_openpt(O_RDWR | O_NOCTTY);
+    if (master_fd < 0) { AddLog("[error] posix_openpt: %s\n", strerror(errno)); return; }
+
+    if (grantpt(master_fd) < 0 || unlockpt(master_fd) < 0)
+    {
+        close(master_fd);
+        AddLog("[error] grantpt/unlockpt: %s\n", strerror(errno));
+        return;
+    }
+
+    char slave_name[256];
+    if (ptsname_r(master_fd, slave_name, sizeof(slave_name)) != 0)
+    {
+        close(master_fd);
+        AddLog("[error] ptsname_r: %s\n", strerror(errno));
+        return;
+    }
+
+    // ── Create and register the session record ────────────────────────────────
+    auto session = std::make_shared<BashSession>();
+    session->master_fd.store(master_fd);
+    {
+        std::lock_guard<std::mutex> lk(BashSessionMutex_);
+        ActiveBashSession_ = session;
+    }
+
+    AddLog("$ %s\n", cmd.c_str());
+    ++BashJobCount_;
+
+    // ── Fork child ────────────────────────────────────────────────────────────
+    pid_t pid = fork();
+    if (pid < 0)
+    {
+        close(master_fd);
+        session->master_fd.store(-1);
+        AddLog("[error] fork: %s\n", strerror(errno));
+        {
+            std::lock_guard<std::mutex> lk(BashSessionMutex_);
+            ActiveBashSession_.reset();
+        }
+        --BashJobCount_;
+        return;
+    }
+
+    if (pid == 0)
+    {
+        // ── Child: set PTY slave as controlling terminal, then exec ───────────
+        setsid();
+        int slave_fd = open(slave_name, O_RDWR);
+        if (slave_fd < 0) _exit(127);
+        ioctl(slave_fd, TIOCSCTTY, 0);
+        dup2(slave_fd, STDIN_FILENO);
+        dup2(slave_fd, STDOUT_FILENO);
+        dup2(slave_fd, STDERR_FILENO);
+        if (slave_fd > STDERR_FILENO) close(slave_fd);
+        close(master_fd);
+        execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
+        _exit(127);
+    }
+
+    // ── Worker thread: read PTY output and detect password prompts ────────────
+    std::thread worker([this, session, alive, pid]()
+    {
+        char        buf[512];
+        std::string partial;   // accumulates bytes before the next newline
+
+        while (true)
+        {
+            if (!alive->load()) break;
+
+            int fd = session->master_fd.load();
+            if (fd < 0) break;
+
+            // Wait up to 50 ms so we can check the alive flag regularly.
+            struct pollfd pfd{ fd, POLLIN, 0 };
+            int ret = poll(&pfd, 1, 50);
+            if (ret < 0)  { if (errno == EINTR) continue; break; }
+            if (ret == 0) continue;
+            if (pfd.revents & (POLLHUP | POLLERR)) break;
+
+            ssize_t n = read(fd, buf, sizeof(buf) - 1);
+            if (n <= 0) break;   // EIO = child closed the PTY slave
+            buf[n] = '\0';
+
+            // PTY ONLCR flag translates \n → \r\n; strip the \r.
+            for (ssize_t i = 0; i < n; ++i)
+                if (buf[i] != '\r') partial += buf[i];
+
+            // Flush every complete line to the log.
+            size_t pos;
+            while ((pos = partial.find('\n')) != std::string::npos)
+            {
+                if (alive->load())
+                    AddLogThreadSafe(partial.substr(0, pos) + "\n");
+                partial.erase(0, pos + 1);
+            }
+
+            // Detect password / passphrase prompts.
+            // sudo writes "[sudo] password for user: " with no trailing newline.
+            if (!partial.empty() && !session->needs_input.load())
+            {
+                std::string lower = partial;
+                for (char& c : lower) c = (char)tolower((unsigned char)c);
+                bool looks_like_prompt =
+                    (lower.find("password")   != std::string::npos ||
+                     lower.find("passphrase") != std::string::npos) &&
+                    (partial.back() == ':' || partial.back() == ' ');
+
+                if (looks_like_prompt && alive->load())
+                {
+                    AddLogThreadSafe(partial + "\n");
+                    partial.clear();
+                    // Signal the main thread to switch the input to password mode.
+                    session->needs_input.store(true);
+                }
+            }
+        }
+
+        // Flush any buffered tail without a trailing newline.
+        if (!partial.empty() && alive->load())
+            AddLogThreadSafe(partial + "\n");
+
+        // Reap the child.
+        int status = 0;
+        waitpid(pid, &status, 0);
+        if (alive->load())
+        {
+            if      (WIFEXITED(status)   && WEXITSTATUS(status))
+                AddLogThreadSafe("[exit " + std::to_string(WEXITSTATUS(status)) + "]\n");
+            else if (WIFSIGNALED(status))
+                AddLogThreadSafe("[signal " + std::to_string(WTERMSIG(status)) + "]\n");
+        }
+
+        // Close master fd under lock so the main thread can't write after close.
+        {
+            std::lock_guard<std::mutex> lk(session->fd_mutex);
+            int fd = session->master_fd.exchange(-1);
+            if (fd >= 0) close(fd);
+        }
+        session->running.store(false);
+        session->needs_input.store(false);
+
+        {
+            std::lock_guard<std::mutex> lk(BashSessionMutex_);
+            if (ActiveBashSession_ == session) ActiveBashSession_.reset();
+        }
+
+        if (alive->load()) --BashJobCount_;
+    });
+    worker.detach();
+}
+
+// ── COPILOT ───────────────────────────────────────────────────────────────────
+
+void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs& a)
+{
+    if (a.raw_args.empty())
+    {
+        AddLog("[error] Usage: COPILOT <question>\n");
+        AddLog("        Runs: gh copilot suggest \"<question>\"\n");
+        return;
+    }
+
+    // Build: gh copilot suggest "<raw_args>" --shell-out
+    // We intentionally do NOT interpolate raw_args into a shell glob; wrap in
+    // single-quotes and escape any embedded single-quotes (X -> '\''X).
+    std::string q(a.raw_args);
+    // Escape single-quotes: replace every ' with '\''.
+    std::string escaped;
+    escaped.reserve(q.size() + 4);
+    for (char c : q)
+    {
+        if (c == '\'') escaped += "'\\''";
+        else            escaped += c;
+    }
+    std::string cmd = "gh copilot suggest '" + escaped + "'";
+
+    std::shared_ptr<std::atomic<bool>> alive = Alive_;
+
+    // ── Reuse the PTY-backed CmdBash infrastructure ───────────────────────────
+    int master_fd = posix_openpt(O_RDWR | O_NOCTTY);
+    if (master_fd < 0) { AddLog("[error] posix_openpt: %s\n", strerror(errno)); return; }
+
+    if (grantpt(master_fd) < 0 || unlockpt(master_fd) < 0)
+    {
+        close(master_fd);
+        AddLog("[error] grantpt/unlockpt: %s\n", strerror(errno));
+        return;
+    }
+
+    char slave_name[256];
+    if (ptsname_r(master_fd, slave_name, sizeof(slave_name)) != 0)
+    {
+        close(master_fd);
+        AddLog("[error] ptsname_r: %s\n", strerror(errno));
+        return;
+    }
+
+    auto session = std::make_shared<BashSession>();
+    session->master_fd.store(master_fd);
+    {
+        std::lock_guard<std::mutex> lk(BashSessionMutex_);
+        ActiveBashSession_ = session;
+    }
+
+    AddLog("$ %s\n", cmd.c_str());
+    ++BashJobCount_;
+
+    pid_t pid = fork();
+    if (pid < 0)
+    {
+        close(master_fd);
+        session->master_fd.store(-1);
+        AddLog("[error] fork: %s\n", strerror(errno));
+        {
+            std::lock_guard<std::mutex> lk(BashSessionMutex_);
+            ActiveBashSession_.reset();
+        }
+        --BashJobCount_;
+        return;
+    }
+
+    if (pid == 0)
+    {
+        setsid();
+        int slave_fd = open(slave_name, O_RDWR);
+        if (slave_fd < 0) _exit(127);
+        ioctl(slave_fd, TIOCSCTTY, 0);
+        dup2(slave_fd, STDIN_FILENO);
+        dup2(slave_fd, STDOUT_FILENO);
+        dup2(slave_fd, STDERR_FILENO);
+        if (slave_fd > STDERR_FILENO) close(slave_fd);
+        close(master_fd);
+        execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
+        _exit(127);
+    }
+
+    std::thread worker([this, session, alive, pid]()
+    {
+        char        buf[512];
+        std::string partial;
+
+        while (true)
+        {
+            if (!alive->load()) break;
+            int fd = session->master_fd.load();
+            if (fd < 0) break;
+            struct pollfd pfd{ fd, POLLIN, 0 };
+            int ret = poll(&pfd, 1, 50);
+            if (ret < 0)  { if (errno == EINTR) continue; break; }
+            if (ret == 0) continue;
+            if (pfd.revents & (POLLHUP | POLLERR)) break;
+            ssize_t n = read(fd, buf, sizeof(buf) - 1);
+            if (n <= 0) break;
+            buf[n] = '\0';
+            for (ssize_t i = 0; i < n; ++i)
+                if (buf[i] != '\r') partial += buf[i];
+            size_t pos;
+            while ((pos = partial.find('\n')) != std::string::npos)
+            {
+                if (alive->load())
+                    AddLogThreadSafe(partial.substr(0, pos) + "\n");
+                partial.erase(0, pos + 1);
+            }
+        }
+
+        if (!partial.empty() && alive->load())
+            AddLogThreadSafe(partial + "\n");
+
+        int status = 0;
+        waitpid(pid, &status, 0);
+        if (alive->load())
+        {
+            if (WIFEXITED(status) && WEXITSTATUS(status) == 127)
+                AddLogThreadSafe("[error] gh not found — install the GitHub CLI\n");
+            else if (WIFEXITED(status) && WEXITSTATUS(status))
+                AddLogThreadSafe("[exit " + std::to_string(WEXITSTATUS(status)) + "]\n");
+            else if (WIFSIGNALED(status))
+                AddLogThreadSafe("[signal " + std::to_string(WTERMSIG(status)) + "]\n");
+        }
+
+        {
+            std::lock_guard<std::mutex> lk(session->fd_mutex);
+            int fd = session->master_fd.exchange(-1);
+            if (fd >= 0) close(fd);
+        }
+        session->running.store(false);
+        {
+            std::lock_guard<std::mutex> lk(BashSessionMutex_);
+            if (ActiveBashSession_ == session) ActiveBashSession_.reset();
+        }
+        if (alive->load()) --BashJobCount_;
+    });
+    worker.detach();
+}

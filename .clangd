@@ -27,3 +27,5 @@ CompileFlags:
     - -Wunused-lambda-capture
 
 # Press Ctrl+Space to bring up completion suggestions
+Hover:
+    ShowAKA: true

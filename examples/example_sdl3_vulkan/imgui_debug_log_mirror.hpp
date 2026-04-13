@@ -22,6 +22,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <tuple>      // std::ignore
 #include <unistd.h>   // ftruncate, fileno
 
 // ---------------------------------------------------------------------------
@@ -126,7 +127,7 @@ public:
                 // Not cross-platform, but harmless on non-Linux
                 char cmd[600];
                 snprintf(cmd, sizeof(cmd), "xdg-open \"%s\" &", dir);
-                (void)system(cmd);
+                std::ignore = system(cmd);
             }
         }
         else
@@ -169,7 +170,7 @@ public:
             if (m_file)
             {
                 fseek(m_file, 0, SEEK_SET);
-                (void)ftruncate(fileno(m_file), 0);
+                std::ignore = ftruncate(fileno(m_file), 0);
             }
         }
         ImGui::SameLine();

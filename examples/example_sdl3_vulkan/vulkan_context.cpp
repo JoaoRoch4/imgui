@@ -103,7 +103,7 @@ void VulkanContext::Setup(ImVector<const char*> instance_extensions)
 
     // Select graphics queue family
     QueueFamily = ImGui_ImplVulkanH_SelectQueueFamilyIndex(PhysicalDevice);
-    IM_ASSERT(QueueFamily != (uint32_t)-1);
+    IM_ASSERT(QueueFamily != static_cast<uint32_t>(-1));
 
     // Create Logical Device (with 1 queue)
     {
@@ -127,7 +127,7 @@ void VulkanContext::Setup(ImVector<const char*> instance_extensions)
         queue_info[0].pQueuePriorities = queue_priority;
         VkDeviceCreateInfo create_info = {};
         create_info.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        create_info.queueCreateInfoCount    = sizeof(queue_info) / sizeof(queue_info[0]);
+        create_info.queueCreateInfoCount    = static_cast<uint32_t>(IM_COUNTOF(queue_info));
         create_info.pQueueCreateInfos       = queue_info;
         create_info.enabledExtensionCount   = static_cast<uint32_t>(device_extensions.Size);
         create_info.ppEnabledExtensionNames = device_extensions.Data;

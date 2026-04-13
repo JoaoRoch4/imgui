@@ -9,27 +9,30 @@
 //   Init()     — after ImGuiLayer::Init()  (ImGui context already exists)
 //   BuildUI()  — inside the frame, between ImGuiLayer::NewFrame() and Render()
 //   PostSwap() — after VulkanContext::FramePresent()
-//   Shutdown() — before ImGuiLayer::Shutdown()
-class TestEngineLayer
-{
-public:
-    TestEngineLayer();
+//   Stop()     — before ImGuiLayer::Shutdown()
+//   Shutdown() — after  ImGuiLayer::Shutdown() (after ImGui::DestroyContext())
+class TestEngineLayer {
+    public:
+	TestEngineLayer();
 
-    ImGuiTestEngine* Engine;
-    bool             ShowWindow;
+	ImGuiTestEngine* Engine;
+	bool ShowWindow;
 
-    // Create the engine, bind it to the current ImGui context, register tests.
-    void Init();
+	// Create the engine, bind it to the current ImGui context, register tests.
+	void Init();
 
-    // Stop and destroy the engine.
-    void Shutdown();
+	// Stop the engine (call BEFORE ImGuiLayer::Shutdown()).
+	void Stop();
 
-    // Must be called once per frame after the framebuffer swap.
-    void PostSwap();
+	// Destroy the engine context (call AFTER ImGuiLayer::Shutdown() / ImGui::DestroyContext()).
+	void Shutdown();
 
-    // Show the test-runner window.
-    void BuildUI();
+	// Must be called once per frame after the framebuffer swap.
+	void PostSwap();
 
-private:
-    void RegisterTests();
+	// Show the test-runner window.
+	void BuildUI();
+
+    private:
+	void RegisterTests();
 };

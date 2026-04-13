@@ -3,6 +3,7 @@
 #include "imgui.h"
 #include <array>
 #include <atomic>
+#include <format>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -61,8 +62,15 @@ public:
     // Erase all log items.
     void ClearLog();
 
-    // Append a formatted line to the log (call from main thread only).
-    void AddLog(const char* fmt, ...) IM_FMTARGS(2);
+    // Append a line to the log (call from main thread only).
+    void AddLog(std::string line);
+
+    // Append a formatted line using C++23 std::format syntax (main thread only).
+    template <typename... Args>
+    void AddLog(std::format_string<Args...> fmt, Args&&... args)
+    {
+        AddLog(std::format(fmt, std::forward<Args>(args)...));
+    }
 
     // Thread-safe variant: safe to call from worker threads.
     // Lines are buffered and flushed to the log on the next Draw() call.

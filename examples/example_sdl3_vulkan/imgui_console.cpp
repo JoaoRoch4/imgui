@@ -4,8 +4,7 @@
 #include <atomic>      // std::atomic
 #include <cctype>      // toupper
 #include <cerrno>      // errno
-#include <cstdarg>     // va_list
-#include <cstdio>      // FILE, popen, pclose, fgets, sprintf
+#include <cstdio>      // FILE, popen, pclose, fgets
 #include <cstring>     // strlen, strcpy, strstr, strncmp, memcpy, strerror
 #include <fcntl.h>     // posix_openpt, O_RDWR, O_NOCTTY
 #include <fstream>     // std::ifstream
@@ -65,14 +64,8 @@ void ImGuiConsole::ClearLog() {
 
 // ─── AddLog ──────────────────────────────────────────────────────────────────
 
-void ImGuiConsole::AddLog(const char *fmt, ...) {
-	std::array<char, 4096> buf{};
-	va_list args;
-	va_start(args, fmt);
-	std::vsnprintf(buf.data(), buf.size(), fmt, args);
-	buf.at(buf.size() - 1) = '\0';
-	va_end(args);
-	Items.emplace_back(buf.data());
+void ImGuiConsole::AddLog(std::string line) {
+	Items.emplace_back(std::move(line));
 }
 
 // ─── RegisterCommand ─────────────────────────────────────────────────────────
@@ -91,7 +84,7 @@ void ImGuiConsole::RegisterCommand(const char *name, const char *description,
 // ─── ExecCommand ─────────────────────────────────────────────────────────────
 
 void ImGuiConsole::ExecCommand(const char *command_line) {
-	AddLog("# %s\n", command_line);
+	AddLog(std::format("# {}\n", command_line));
 
 	// ── History (deduplicate, most-recent at end)
 	// ─────────────────────────────
@@ -148,8 +141,7 @@ void ImGuiConsole::ExecCommand(const char *command_line) {
 		}
 	}
 
-	AddLog("[error] Unknown command '%s'. Type HELP for a list.\n",
-		   tokens.at(0).c_str());
+	AddLog(std::format("[error] Unknown command '{}'. Type HELP for a list.\n", tokens.at(0)));
 	ScrollToBottom = true;
 }
 
@@ -172,7 +164,7 @@ void ImGuiConsole::FlushPendingLogs() {
 		tmp.swap(PendingLines_);
 	}
 	for (auto &line : tmp)
-		AddLog("%s", line.c_str());
+		AddLog(std::move(line));
 }
 
 // ─── Draw
@@ -377,9 +369,8 @@ void ImGuiConsole::Draw(const char *title, bool *p_open) {
 		ImGui::End();
 		return;
 	}
-	std::array<char, 24> uid{};
-	std::snprintf(uid.data(), uid.size(), "%p", static_cast<void *>(this));
-	DrawContents(uid.data());
+	std::string uid = std::format("{:p}", static_cast<void *>(this));
+	DrawContents(uid.c_str());
 	ImGui::End();
 }
 
@@ -410,16 +401,13 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 				candidates.push_back(ci);
 
 		if (candidates.size() == 0) {
-			AddLog("No completion for \"%.*s\"\n", static_cast<int>(word_end - word_start),
-				   word_start);
+			AddLog(std::format("No completion for \"{}\"\n", std::string_view(word_start, static_cast<std::size_t>(word_end - word_start))));
 		} else if (candidates.size() == 1) {
 			data->DeleteChars(static_cast<int>(word_start - data->Buf),
 							  static_cast<int>(word_end - word_start));
 			data->InsertChars(data->CursorPos, Commands.at(candidates.at(0)).name.c_str());
 			data->InsertChars(data->CursorPos, " ");
-			AddLog("\x01%s\t%s\n",
-				   Commands.at(candidates.at(0)).name.c_str(),
-				   Commands.at(candidates.at(0)).description.c_str());
+			AddLog(std::format("\x01{}\t{}\n", Commands.at(candidates.at(0)).name, Commands.at(candidates.at(0)).description));
 		} else {
 			// Expand to longest common prefix then list candidates
 			int match_len = static_cast<int>(word_end - word_start);
@@ -445,9 +433,7 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 			}
 			AddLog("Possible completions:\n");
 			for (int i = 0; i < static_cast<int>(candidates.size()); ++i)
-				AddLog("\x01%s\t%s\n",
-					   Commands.at(candidates.at(i)).name.c_str(),
-					   Commands.at(candidates.at(i)).description.c_str());
+				AddLog(std::format("\x01{}\t{}\n", Commands.at(candidates.at(i)).name, Commands.at(candidates.at(i)).description));
 		}
 	} else if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
 		const int prev = HistoryPos;
@@ -552,7 +538,7 @@ ConsoleCommands::ConsoleCommands() {
 void ConsoleCommands::CmdHelp(const ConsoleCommandArgs & /*a*/) {
 	AddLog("Available commands:\n");
 	for (const auto &cmd : Commands)
-		AddLog("\x01%s\t%s\n", cmd.name.c_str(), cmd.description.c_str());
+		AddLog(std::format("\x01{}\t{}\n", cmd.name, cmd.description));
 }
 
 // ── HISTORY ──────────────────────────────────────────────────────────────────
@@ -560,7 +546,7 @@ void ConsoleCommands::CmdHelp(const ConsoleCommandArgs & /*a*/) {
 void ConsoleCommands::CmdHistory(const ConsoleCommandArgs & /*a*/) {
 	int first = static_cast<int>(History.size()) - 10;
 	for (int i = (first < 0 ? 0 : first); i < static_cast<int>(History.size()); ++i)
-		AddLog("%3d: %s\n", i, History.at(static_cast<std::size_t>(i)).c_str());
+		AddLog(std::format("{:3}: {}\n", i, History.at(static_cast<std::size_t>(i))));
 }
 
 // ── CLEAR ────────────────────────────────────────────────────────────────────
@@ -573,14 +559,14 @@ void ConsoleCommands::CmdEcho(const ConsoleCommandArgs &a) {
 	if (a.raw_args.empty())
 		AddLog("\n");
 	else
-		AddLog("%.*s\n", static_cast<int>(a.raw_args.size()), a.raw_args.data());
+		AddLog(std::format("{}\n", a.raw_args));
 }
 
 // ── FPS ──────────────────────────────────────────────────────────────────────
 
 void ConsoleCommands::CmdFps(const ConsoleCommandArgs & /*a*/) {
 	const ImGuiIO &io = ImGui::GetIO();
-	AddLog("%.1f FPS  (%.3f ms/frame)\n", io.Framerate, 1000.0f / io.Framerate);
+	AddLog(std::format("{:.1f} FPS  ({:.3f} ms/frame)\n", io.Framerate, 1000.0f / io.Framerate));
 }
 
 // ── STYLE ────────────────────────────────────────────────────────────────────
@@ -610,8 +596,7 @@ void ConsoleCommands::CmdStyle(const ConsoleCommandArgs &a) {
 			OnStyleChange(2);
 		AddLog("Style: Classic\n");
 	} else
-		AddLog("[error] Unknown style '%s'. Use DARK, LIGHT or CLASSIC.\n",
-			   a.args.at(0).c_str());
+		AddLog(std::format("[error] Unknown style '{}'. Use DARK, LIGHT or CLASSIC.\n", a.args.at(0)));
 }
 
 // ── DEMO ─────────────────────────────────────────────────────────────────────
@@ -634,8 +619,7 @@ void ConsoleCommands::CmdDemo(const ConsoleCommandArgs &a) {
 			OnDemoToggle(false);
 		AddLog("Demo window: OFF\n");
 	} else
-		AddLog("[error] Unknown argument '%s'. Use ON or OFF.\n",
-			   a.args.at(0).c_str());
+		AddLog(std::format("[error] Unknown argument '{}'. Use ON or OFF.\n", a.args.at(0)));
 }
 
 // ── LOG ──────────────────────────────────────────────────────────────────────
@@ -668,10 +652,9 @@ void ConsoleCommands::CmdLog(const ConsoleCommandArgs &a) {
 		lines.push_back(std::move(line));
 
 	int start = std::max(0, static_cast<int>(lines.size()) - n);
-	AddLog("── /tmp/imgui_debug.log (last %d lines) ──\n",
-		   static_cast<int>(lines.size()) - start);
+	AddLog(std::format("── /tmp/imgui_debug.log (last {} lines) ──\n", static_cast<int>(lines.size()) - start));
 	for (int i = start; i < static_cast<int>(lines.size()); ++i)
-		AddLog("%s\n", lines.at(static_cast<std::size_t>(i)).c_str());
+		AddLog(std::format("{}\n", lines.at(static_cast<std::size_t>(i))));
 }
 
 // ── SET ──────────────────────────────────────────────────────────────────────
@@ -688,7 +671,7 @@ void ConsoleCommands::CmdSet(const ConsoleCommandArgs &a) {
 		value += a.args.at(i);
 	}
 	Variables.insert_or_assign(a.args.at(0), value);
-	AddLog("SET %s = %s\n", a.args.at(0).c_str(), value.c_str());
+	AddLog(std::format("SET {} = {}\n", a.args.at(0), value));
 }
 
 // ── GET ──────────────────────────────────────────────────────────────────────
@@ -700,14 +683,14 @@ void ConsoleCommands::CmdGet(const ConsoleCommandArgs &a) {
 			return;
 		}
 		for (const auto &[k, v] : Variables)
-			AddLog("  %s = %s\n", k.c_str(), v.c_str());
+			AddLog(std::format("  {} = {}\n", k, v));
 		return;
 	}
 	auto it = Variables.find(a.args.at(0));
 	if (it == Variables.end())
-		AddLog("[error] Undefined variable '%s'\n", a.args.at(0).c_str());
+		AddLog(std::format("[error] Undefined variable '{}'\n", a.args.at(0)));
 	else
-		AddLog("%s = %s\n", a.args.at(0).c_str(), it->second.c_str());
+		AddLog(std::format("{} = {}\n", a.args.at(0), it->second));
 }
 
 // ── QUIT ─────────────────────────────────────────────────────────────────────
@@ -741,20 +724,20 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
 	// ───────────────────────────────────────────────────────
 	int master_fd = posix_openpt(O_RDWR | O_NOCTTY);
 	if (master_fd < 0) {
-		AddLog("[error] posix_openpt: %s\n", strerror(errno));
+		AddLog(std::format("[error] posix_openpt: {}\n", strerror(errno)));
 		return;
 	}
 
 	if (grantpt(master_fd) < 0 || unlockpt(master_fd) < 0) {
 		close(master_fd);
-		AddLog("[error] grantpt/unlockpt: %s\n", strerror(errno));
+		AddLog(std::format("[error] grantpt/unlockpt: {}\n", strerror(errno)));
 		return;
 	}
 
 	std::array<char, 256> slave_name{};
 	if (ptsname_r(master_fd, slave_name.data(), slave_name.size()) != 0) {
 		close(master_fd);
-		AddLog("[error] ptsname_r: %s\n", strerror(errno));
+		AddLog(std::format("[error] ptsname_r: {}\n", strerror(errno)));
 		return;
 	}
 
@@ -767,7 +750,7 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
 		ActiveBashSession_ = session;
 	}
 
-	AddLog("$ %s\n", cmd.c_str());
+	AddLog(std::format("$ {}\n", cmd));
 	++BashJobCount_;
 
 	// ── Fork child
@@ -776,7 +759,7 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
 	if (pid < 0) {
 		close(master_fd);
 		session->master_fd.store(-1);
-		AddLog("[error] fork: %s\n", strerror(errno));
+		AddLog(std::format("[error] fork: {}\n", strerror(errno)));
 		{
 			std::lock_guard<std::mutex> lk(BashSessionMutex_);
 			ActiveBashSession_.reset();
@@ -940,20 +923,20 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs &a) {
 	// ───────────────────────────
 	int master_fd = posix_openpt(O_RDWR | O_NOCTTY);
 	if (master_fd < 0) {
-		AddLog("[error] posix_openpt: %s\n", strerror(errno));
+		AddLog(std::format("[error] posix_openpt: {}\n", strerror(errno)));
 		return;
 	}
 
 	if (grantpt(master_fd) < 0 || unlockpt(master_fd) < 0) {
 		close(master_fd);
-		AddLog("[error] grantpt/unlockpt: %s\n", strerror(errno));
+		AddLog(std::format("[error] grantpt/unlockpt: {}\n", strerror(errno)));
 		return;
 	}
 
 	std::array<char, 256> slave_name{};
 	if (ptsname_r(master_fd, slave_name.data(), slave_name.size()) != 0) {
 		close(master_fd);
-		AddLog("[error] ptsname_r: %s\n", strerror(errno));
+		AddLog(std::format("[error] ptsname_r: {}\n", strerror(errno)));
 		return;
 	}
 
@@ -964,14 +947,14 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs &a) {
 		ActiveBashSession_ = session;
 	}
 
-	AddLog("$ %s\n", cmd.c_str());
+	AddLog(std::format("$ {}\n", cmd));
 	++BashJobCount_;
 
 	pid_t pid = fork();
 	if (pid < 0) {
 		close(master_fd);
 		session->master_fd.store(-1);
-		AddLog("[error] fork: %s\n", strerror(errno));
+		AddLog(std::format("[error] fork: {}\n", strerror(errno)));
 		{
 			std::lock_guard<std::mutex> lk(BashSessionMutex_);
 			ActiveBashSession_.reset();
@@ -1134,20 +1117,20 @@ void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs & /*a*/) {
 
 	int master_fd = posix_openpt(O_RDWR | O_NOCTTY);
 	if (master_fd < 0) {
-		AddLog("[error] posix_openpt: %s\n", strerror(errno));
+		AddLog(std::format("[error] posix_openpt: {}\n", strerror(errno)));
 		return;
 	}
 
 	if (grantpt(master_fd) < 0 || unlockpt(master_fd) < 0) {
 		close(master_fd);
-		AddLog("[error] grantpt/unlockpt: %s\n", strerror(errno));
+		AddLog(std::format("[error] grantpt/unlockpt: {}\n", strerror(errno)));
 		return;
 	}
 
 	std::array<char, 256> slave_name{};
 	if (ptsname_r(master_fd, slave_name.data(), slave_name.size()) != 0) {
 		close(master_fd);
-		AddLog("[error] ptsname_r: %s\n", strerror(errno));
+		AddLog(std::format("[error] ptsname_r: {}\n", strerror(errno)));
 		return;
 	}
 
@@ -1165,7 +1148,7 @@ void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs & /*a*/) {
 		ActiveBashSession_ = session;
 	}
 
-	AddLog("[tty] Starting %s  (type 'exit' to quit)\n", shell);
+	AddLog(std::format("[tty] Starting {}  (type 'exit' to quit)\n", shell));
 	++BashJobCount_;
 
 	pid_t pid = fork();
@@ -1173,7 +1156,7 @@ void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs & /*a*/) {
 		close(master_fd);
 		session->master_fd.store(-1);
 		session->terminal_mode.store(false);
-		AddLog("[error] fork: %s\n", strerror(errno));
+		AddLog(std::format("[error] fork: {}\n", strerror(errno)));
 		{
 			std::lock_guard<std::mutex> lk(BashSessionMutex_);
 			ActiveBashSession_.reset();

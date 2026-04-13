@@ -135,6 +135,8 @@ protected:
 //   GET [name]               Retrieve a variable (or list all)
 //   BASH <cmd> [args…]       Run a shell command; output streamed to the log
 //   COPILOT <question…>      Ask GitHub Copilot CLI: `gh copilot suggest "<question>"`
+//   TERMINAL                 Open an interactive shell ($SHELL) in the console
+//   KONSOLE                  Alias for TERMINAL
 //   QUIT                     Signal the application to exit
 //
 // Wire the three callbacks below (from ImGuiLayer) to make DEMO / STYLE / QUIT
@@ -164,6 +166,7 @@ private:
     void CmdSet     (const ConsoleCommandArgs& a);
     void CmdGet     (const ConsoleCommandArgs& a);
     void CmdQuit    (const ConsoleCommandArgs& a);
-    void CmdBash    (const ConsoleCommandArgs& a);
-    void CmdCopilot (const ConsoleCommandArgs& a);
+    void CmdBash     (const ConsoleCommandArgs& a);
+    void CmdCopilot  (const ConsoleCommandArgs& a);
+    void CmdTerminal (const ConsoleCommandArgs& a);
 };

@@ -27,11 +27,12 @@
 
 struct BashSession
 {
-    std::atomic<int>  master_fd{-1};      // master PTY fd; -1 = already closed
-    std::atomic<bool> running{true};      // worker thread is alive
-    std::atomic<bool> needs_input{false}; // password prompt has been detected
-    char              password_buf[256]{};// filled by the main thread on Enter
-    std::mutex        fd_mutex;           // serialises write (main) vs close (worker)
+    std::atomic<int>  master_fd{-1};       // master PTY fd; -1 = already closed
+    std::atomic<bool> running{true};       // worker thread is alive
+    std::atomic<bool> needs_input{false};  // password prompt has been detected
+    std::atomic<bool> terminal_mode{false};// interactive TTY: forward all input
+    char              password_buf[256]{}; // filled by the main thread on Enter
+    std::mutex        fd_mutex;            // serialises write (main) vs close (worker)
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -40,10 +41,12 @@ struct BashSession
 
 ImGuiConsole::ImGuiConsole()
 {
+    *InputBuf = static_cast<char>('\0');
     memset(InputBuf, 0, sizeof(InputBuf));
     HistoryPos    = -1;
     AutoScroll    = true;
     ScrollToBottom = false;
+    SelectedItem_ = nullptr;
     AddLog("Console ready. Type HELP for a list of commands.\n");
 }
 
@@ -270,7 +273,30 @@ void ImGuiConsole::DrawContents(const char* id)
         active_session = ActiveBashSession_;
     }
 
-    if (active_session && active_session->needs_input.load())
+    if (active_session && active_session->terminal_mode.load())
+    {
+        // ── Terminal pass-through mode ─────────────────────────────────────────
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "[TTY]");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::InputText("##tty_input", InputBuf, IM_ARRAYSIZE(InputBuf),
+                             ImGuiInputTextFlags_EnterReturnsTrue |
+                             ImGuiInputTextFlags_EscapeClearsAll))
+        {
+            std::string line(InputBuf);
+            line += '\n';
+            {
+                std::lock_guard<std::mutex> lk(active_session->fd_mutex);
+                int fd = active_session->master_fd.load();
+                if (fd >= 0) write(fd, line.c_str(), line.size());
+            }
+            InputBuf[0] = '\0';
+            reclaim_focus = true;
+        }
+        ImGui::SetItemDefaultFocus();
+        if (reclaim_focus) ImGui::SetKeyboardFocusHere(-1);
+    }
+    else if (active_session && active_session->needs_input.load())
     {
         // ── Password mode ─────────────────────────────────────────────────────
         ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "(password)");
@@ -485,9 +511,11 @@ ConsoleCommands::ConsoleCommands()
     RegisterCommand("LOG",     "Tail debug log: LOG [n=20]",                 bind(&ConsoleCommands::CmdLog));
     RegisterCommand("SET",     "Set variable: SET <name> <value…>",          bind(&ConsoleCommands::CmdSet));
     RegisterCommand("GET",     "Get variable: GET [name]",                   bind(&ConsoleCommands::CmdGet));
-    RegisterCommand("BASH",    "Run shell command: BASH <cmd> [args…]",      bind(&ConsoleCommands::CmdBash));
-    RegisterCommand("COPILOT", "Ask GitHub Copilot CLI: COPILOT <question…>", bind(&ConsoleCommands::CmdCopilot));
-    RegisterCommand("QUIT",    "Exit the application",                        bind(&ConsoleCommands::CmdQuit));
+    RegisterCommand("BASH",     "Run shell command: BASH <cmd> [args\u2026]",           bind(&ConsoleCommands::CmdBash));
+    RegisterCommand("COPILOT",  "Ask GitHub Copilot CLI: COPILOT <question\u2026>",      bind(&ConsoleCommands::CmdCopilot));
+    RegisterCommand("TERMINAL", "Open interactive shell ($SHELL) in the console",   bind(&ConsoleCommands::CmdTerminal));
+    RegisterCommand("KONSOLE",  "Alias for TERMINAL",                               bind(&ConsoleCommands::CmdTerminal));
+    RegisterCommand("QUIT",     "Exit the application",                             bind(&ConsoleCommands::CmdQuit));
 }
 
 // ── HELP ─────────────────────────────────────────────────────────────────────
@@ -957,6 +985,197 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs& a)
             if (fd >= 0) close(fd);
         }
         session->running.store(false);
+        {
+            std::lock_guard<std::mutex> lk(BashSessionMutex_);
+            if (ActiveBashSession_ == session) ActiveBashSession_.reset();
+        }
+        if (alive->load()) --BashJobCount_;
+    });
+    worker.detach();
+}
+
+// ── TERMINAL / KONSOLE ────────────────────────────────────────────────────────
+// Strip ANSI/VT100 escape sequences so shell prompts appear as plain text.
+
+static std::string StripAnsi(const std::string& in)
+{
+    std::string out;
+    out.reserve(in.size());
+    size_t i = 0;
+    while (i < in.size())
+    {
+        if (in[i] == '\x1b')
+        {
+            ++i;
+            if (i >= in.size()) break;
+            if (in[i] == '[')                        // CSI: ESC [ params final
+            {
+                ++i;
+                while (i < in.size() && (in[i] < 0x40 || in[i] > 0x7e)) ++i;
+                if (i < in.size()) ++i;
+            }
+            else if (in[i] == ']')                   // OSC: ESC ] ... ST/BEL
+            {
+                ++i;
+                while (i < in.size() && in[i] != '\x07' && in[i] != '\x1b') ++i;
+                if (i < in.size() && in[i] == '\x07') ++i;
+                else if (i < in.size() && in[i] == '\x1b') { ++i; if (i < in.size()) ++i; }
+            }
+            else if (in[i] == '(' || in[i] == ')')  // charset designation
+            {
+                ++i; if (i < in.size()) ++i;
+            }
+            else { ++i; }                            // two-char escape (ESC M, ESC c …)
+        }
+        else if (in[i] == '\x07') { ++i; }           // BEL — discard
+        else if (in[i] == '\x08')                    // BS — remove last char
+        {
+            if (!out.empty()) out.pop_back();
+            ++i;
+        }
+        else { out += in[i++]; }
+    }
+    return out;
+}
+
+// Starts an interactive $SHELL in the PTY and switches the console input bar
+// into pass-through mode.  All typed lines are forwarded directly to the shell;
+// output (including the prompt) is ANSI-stripped and shown in the log.
+// Type 'exit' (or Ctrl+D via the input) to end the session.
+
+void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs& /*a*/)
+{
+    const char* shell = getenv("SHELL");
+    if (!shell || !*shell) shell = "/bin/bash";
+
+    int master_fd = posix_openpt(O_RDWR | O_NOCTTY);
+    if (master_fd < 0) { AddLog("[error] posix_openpt: %s\n", strerror(errno)); return; }
+
+    if (grantpt(master_fd) < 0 || unlockpt(master_fd) < 0)
+    {
+        close(master_fd);
+        AddLog("[error] grantpt/unlockpt: %s\n", strerror(errno));
+        return;
+    }
+
+    char slave_name[256];
+    if (ptsname_r(master_fd, slave_name, sizeof(slave_name)) != 0)
+    {
+        close(master_fd);
+        AddLog("[error] ptsname_r: %s\n", strerror(errno));
+        return;
+    }
+
+    // Give the PTY a wide window so bash doesn't hard-wrap at 80 columns.
+    struct winsize ws = {};
+    ws.ws_col = 220;
+    ws.ws_row = 50;
+    ioctl(master_fd, TIOCSWINSZ, &ws);
+
+    auto session = std::make_shared<BashSession>();
+    session->master_fd.store(master_fd);
+    session->terminal_mode.store(true);
+    {
+        std::lock_guard<std::mutex> lk(BashSessionMutex_);
+        ActiveBashSession_ = session;
+    }
+
+    AddLog("[tty] Starting %s  (type 'exit' to quit)\n", shell);
+    ++BashJobCount_;
+
+    pid_t pid = fork();
+    if (pid < 0)
+    {
+        close(master_fd);
+        session->master_fd.store(-1);
+        session->terminal_mode.store(false);
+        AddLog("[error] fork: %s\n", strerror(errno));
+        {
+            std::lock_guard<std::mutex> lk(BashSessionMutex_);
+            ActiveBashSession_.reset();
+        }
+        --BashJobCount_;
+        return;
+    }
+
+    if (pid == 0)
+    {
+        // Child: become a session leader, attach PTY slave as controlling tty.
+        setsid();
+        int slave_fd = open(slave_name, O_RDWR);
+        if (slave_fd < 0) _exit(127);
+        ioctl(slave_fd, TIOCSCTTY, 0);
+        dup2(slave_fd, STDIN_FILENO);
+        dup2(slave_fd, STDOUT_FILENO);
+        dup2(slave_fd, STDERR_FILENO);
+        if (slave_fd > STDERR_FILENO) close(slave_fd);
+        close(master_fd);
+        setenv("TERM", "xterm-256color", 1);
+        execl(shell, shell, "-i", nullptr);
+        _exit(127);
+    }
+
+    std::shared_ptr<std::atomic<bool>> alive = Alive_;
+    std::thread worker([this, session, alive, pid]()
+    {
+        char        buf[512];
+        std::string partial;
+
+        while (true)
+        {
+            if (!alive->load()) break;
+            int fd = session->master_fd.load();
+            if (fd < 0) break;
+
+            struct pollfd pfd{ fd, POLLIN, 0 };
+            int ret = poll(&pfd, 1, 50);
+            if (ret < 0)  { if (errno == EINTR) continue; break; }
+            if (ret == 0) continue;
+            if (pfd.revents & (POLLHUP | POLLERR)) break;
+
+            ssize_t n = read(fd, buf, sizeof(buf) - 1);
+            if (n <= 0) break;
+            buf[n] = '\0';
+
+            // Strip \r injected by PTY ONLCR translation.
+            for (ssize_t i = 0; i < n; ++i)
+                if (buf[i] != '\r') partial += buf[i];
+
+            // Flush complete lines.
+            size_t pos;
+            while ((pos = partial.find('\n')) != std::string::npos)
+            {
+                if (alive->load())
+                    AddLogThreadSafe(StripAnsi(partial.substr(0, pos)) + "\n");
+                partial.erase(0, pos + 1);
+            }
+
+            // Flush any remaining partial content (e.g. the shell prompt,
+            // which has no trailing newline).
+            if (!partial.empty() && alive->load())
+            {
+                std::string stripped = StripAnsi(partial);
+                if (!stripped.empty())
+                    AddLogThreadSafe(std::move(stripped));
+                partial.clear();
+            }
+        }
+
+        if (!partial.empty() && alive->load())
+            AddLogThreadSafe(StripAnsi(partial) + "\n");
+
+        int status = 0;
+        waitpid(pid, &status, 0);
+        if (alive->load())
+            AddLogThreadSafe("[tty] Shell exited.\n");
+
+        {
+            std::lock_guard<std::mutex> lk(session->fd_mutex);
+            int fd = session->master_fd.exchange(-1);
+            if (fd >= 0) close(fd);
+        }
+        session->running.store(false);
+        session->terminal_mode.store(false);
         {
             std::lock_guard<std::mutex> lk(BashSessionMutex_);
             if (ActiveBashSession_ == session) ActiveBashSession_.reset();

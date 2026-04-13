@@ -35,6 +35,8 @@
 // ---------------------------------------------------------------------------
 class ImGuiDebugLogMirror {
   public:
+	ImGuiDebugLogMirror() : m_file{}, m_last_buf_size{0}, m_path{} {}
+
 	// Open (or re-open) the output file.
 	// Call once, after ImGui::CreateContext().
 	// Returns false if the file cannot be opened.
@@ -179,7 +181,7 @@ class ImGuiDebugLogMirror {
 	~ImGuiDebugLogMirror() { Close(); }
 
   private:
-	std::ofstream m_file{};
-	int m_last_buf_size{0};
-	std::filesystem::path m_path{};
+	std::ofstream         m_file;
+	int                   m_last_buf_size;
+	std::filesystem::path m_path;
 };

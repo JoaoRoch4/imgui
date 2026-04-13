@@ -3,6 +3,11 @@
 #include "imgui_te_context.h"
 #include "imgui_te_ui.h"
 
+TestEngineLayer::TestEngineLayer()
+    : Engine{nullptr}
+    , ShowWindow{true}
+{}
+
 void TestEngineLayer::Init()
 {
     Engine = ImGuiTestEngine_CreateContext();

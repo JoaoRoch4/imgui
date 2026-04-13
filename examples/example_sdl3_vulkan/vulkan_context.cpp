@@ -5,17 +5,35 @@
 #endif
 
 #include "vulkan_context.hpp"
-#include <cstdio>    // fprintf
+#include <array>
+#include <print>
 #include <cstdlib>   // abort, exit
 #include <cstring>   // strcmp
 
 // ── static helpers ────────────────────────────────────────────────────────────
 
+VulkanContext::VulkanContext()
+    : Allocator{nullptr}
+    , Instance{VK_NULL_HANDLE}
+    , PhysicalDevice{VK_NULL_HANDLE}
+    , Device{VK_NULL_HANDLE}
+    , QueueFamily{static_cast<uint32_t>(-1)}
+    , Queue{VK_NULL_HANDLE}
+    , PipelineCache{VK_NULL_HANDLE}
+    , DescriptorPool{VK_NULL_HANDLE}
+    , MainWindowData{}
+    , MinImageCount{2}
+    , SwapChainRebuild{false}
+#ifdef APP_USE_VULKAN_DEBUG_REPORT
+    , DebugReport{VK_NULL_HANDLE}
+#endif
+{}
+
 void VulkanContext::CheckVkResult(VkResult err)
 {
     if (err == VK_SUCCESS)
         return;
-    std::fprintf(stderr, "[vulkan] Error: VkResult = %d\n", err);
+    std::println(stderr, "[vulkan] Error: VkResult = {}", static_cast<int>(err));
     if (err < 0)
         abort();
 }
@@ -26,8 +44,8 @@ VKAPI_ATTR VkBool32 VKAPI_CALL VulkanContext::DebugReportCallback(
     uint64_t /*object*/, size_t /*location*/, int32_t /*messageCode*/,
     const char* /*pLayerPrefix*/, const char* pMessage, void* /*pUserData*/)
 {
-    std::fprintf(stderr, "[vulkan] Debug report from ObjectType: %i\nMessage: %s\n\n",
-            objectType, pMessage);
+    std::println(stderr, "[vulkan] Debug report from ObjectType: {}\nMessage: {}\n",
+            static_cast<int>(objectType), pMessage);
     return VK_FALSE;
 }
 #endif
@@ -72,9 +90,9 @@ void VulkanContext::Setup(std::vector<const char*> instance_extensions)
         }
 #endif
 #ifdef APP_USE_VULKAN_DEBUG_REPORT
-        const char* layers[] = { "VK_LAYER_KHRONOS_validation" };
-        create_info.enabledLayerCount = 1;
-        create_info.ppEnabledLayerNames = layers;
+        const std::array<const char*, 1> layers{"VK_LAYER_KHRONOS_validation"};
+        create_info.enabledLayerCount   = static_cast<uint32_t>(layers.size());
+        create_info.ppEnabledLayerNames = layers.data();
         instance_extensions.push_back("VK_EXT_debug_report");
 #endif
         create_info.enabledExtensionCount  = static_cast<uint32_t>(instance_extensions.size());
@@ -119,16 +137,16 @@ void VulkanContext::Setup(std::vector<const char*> instance_extensions)
         if (IsExtensionAvailable(properties, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME))
             device_extensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
 #endif
-        const float queue_priority[] = { 1.0f };
-        VkDeviceQueueCreateInfo queue_info[1] = {};
-        queue_info[0].sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queue_info[0].queueFamilyIndex = QueueFamily;
-        queue_info[0].queueCount       = 1;
-        queue_info[0].pQueuePriorities = queue_priority;
+        const std::array<float, 1> queue_priority{1.0f};
+        std::array<VkDeviceQueueCreateInfo, 1> queue_info{};
+        queue_info.at(0).sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queue_info.at(0).queueFamilyIndex = QueueFamily;
+        queue_info.at(0).queueCount       = 1;
+        queue_info.at(0).pQueuePriorities = queue_priority.data();
         VkDeviceCreateInfo create_info = {};
         create_info.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        create_info.queueCreateInfoCount    = static_cast<uint32_t>(IM_COUNTOF(queue_info));
-        create_info.pQueueCreateInfos       = queue_info;
+        create_info.queueCreateInfoCount    = static_cast<uint32_t>(queue_info.size());
+        create_info.pQueueCreateInfos       = queue_info.data();
         create_info.enabledExtensionCount   = static_cast<uint32_t>(device_extensions.size());
         create_info.ppEnabledExtensionNames = device_extensions.data();
         err = vkCreateDevice(PhysicalDevice, &create_info, Allocator, &Device);
@@ -138,9 +156,9 @@ void VulkanContext::Setup(std::vector<const char*> instance_extensions)
 
     // Create Descriptor Pool
     {
-        VkDescriptorPoolSize pool_sizes[] =
+        std::array<VkDescriptorPoolSize, 1> pool_sizes =
         {
-            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, IMGUI_IMPL_VULKAN_MINIMUM_IMAGE_SAMPLER_POOL_SIZE },
+            VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, IMGUI_IMPL_VULKAN_MINIMUM_IMAGE_SAMPLER_POOL_SIZE },
         };
         VkDescriptorPoolCreateInfo pool_info = {};
         pool_info.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -148,8 +166,8 @@ void VulkanContext::Setup(std::vector<const char*> instance_extensions)
         pool_info.maxSets       = 0;
         for (VkDescriptorPoolSize& s : pool_sizes)
             pool_info.maxSets += s.descriptorCount;
-        pool_info.poolSizeCount = static_cast<uint32_t>(IM_COUNTOF(pool_sizes));
-        pool_info.pPoolSizes    = pool_sizes;
+        pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
+        pool_info.pPoolSizes    = pool_sizes.data();
         err = vkCreateDescriptorPool(Device, &pool_info, Allocator, &DescriptorPool);
         CheckVkResult(err);
     }
@@ -163,11 +181,11 @@ void VulkanContext::SetupWindow(VkSurfaceKHR surface, int width, int height)
     vkGetPhysicalDeviceSurfaceSupportKHR(PhysicalDevice, QueueFamily, surface, &res);
     if (res != VK_TRUE)
     {
-        std::fprintf(stderr, "Error no WSI support on physical device 0\n");
+        std::println(stderr, "Error no WSI support on physical device 0");
         exit(-1);
     }
 
-    const VkFormat requestSurfaceImageFormat[] = {
+    const std::array<VkFormat, 4> requestSurfaceImageFormat = {
         VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM,
         VK_FORMAT_B8G8R8_UNORM,   VK_FORMAT_R8G8B8_UNORM,
     };
@@ -175,16 +193,16 @@ void VulkanContext::SetupWindow(VkSurfaceKHR surface, int width, int height)
     wd->Surface       = surface;
     wd->SurfaceFormat = ImGui_ImplVulkanH_SelectSurfaceFormat(
         PhysicalDevice, wd->Surface,
-        requestSurfaceImageFormat, static_cast<size_t>(IM_COUNTOF(requestSurfaceImageFormat)),
+        requestSurfaceImageFormat.data(), requestSurfaceImageFormat.size(),
         requestSurfaceColorSpace);
 
 #ifdef APP_USE_UNLIMITED_FRAME_RATE
-    VkPresentModeKHR present_modes[] = { VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR, VK_PRESENT_MODE_FIFO_KHR };
+    const std::array<VkPresentModeKHR, 3> present_modes = { VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR, VK_PRESENT_MODE_FIFO_KHR };
 #else
-    VkPresentModeKHR present_modes[] = { VK_PRESENT_MODE_FIFO_KHR };
+    const std::array<VkPresentModeKHR, 1> present_modes = { VK_PRESENT_MODE_FIFO_KHR };
 #endif
     wd->PresentMode = ImGui_ImplVulkanH_SelectPresentMode(
-        PhysicalDevice, wd->Surface, &present_modes[0], IM_COUNTOF(present_modes));
+        PhysicalDevice, wd->Surface, present_modes.data(), static_cast<int>(present_modes.size()));
 
     IM_ASSERT(MinImageCount >= 2);
     ImGui_ImplVulkanH_CreateOrResizeWindow(

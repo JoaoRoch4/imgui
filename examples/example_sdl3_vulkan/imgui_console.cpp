@@ -6,7 +6,6 @@
 #include <cerrno>      // errno
 #include <cstdarg>     // va_list
 #include <cstdio>      // FILE, popen, pclose, fgets, sprintf
-#include <cstdlib>     // malloc, free
 #include <cstring>     // strlen, strcpy, strstr, strncmp, memcpy, strerror
 #include <fcntl.h>     // posix_openpt, O_RDWR, O_NOCTTY
 #include <fstream>     // std::ifstream

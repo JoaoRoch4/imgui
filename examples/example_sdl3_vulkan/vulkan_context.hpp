@@ -13,17 +13,19 @@
 class VulkanContext
 {
 public:
-    VkAllocationCallbacks*   Allocator        = nullptr;
-    VkInstance               Instance         = VK_NULL_HANDLE;
-    VkPhysicalDevice         PhysicalDevice   = VK_NULL_HANDLE;
-    VkDevice                 Device           = VK_NULL_HANDLE;
-    uint32_t                 QueueFamily      = static_cast<uint32_t>(-1);
-    VkQueue                  Queue            = VK_NULL_HANDLE;
-    VkPipelineCache          PipelineCache    = VK_NULL_HANDLE;
-    VkDescriptorPool         DescriptorPool   = VK_NULL_HANDLE;
-    ImGui_ImplVulkanH_Window MainWindowData   = {};
-    uint32_t                 MinImageCount    = 2;
-    bool                     SwapChainRebuild = false;
+    VulkanContext();
+
+    VkAllocationCallbacks*   Allocator;
+    VkInstance               Instance;
+    VkPhysicalDevice         PhysicalDevice;
+    VkDevice                 Device;
+    uint32_t                 QueueFamily;
+    VkQueue                  Queue;
+    VkPipelineCache          PipelineCache;
+    VkDescriptorPool         DescriptorPool;
+    ImGui_ImplVulkanH_Window MainWindowData;
+    uint32_t                 MinImageCount;
+    bool                     SwapChainRebuild;
 
     // Initialise the Vulkan instance, device, queues and descriptor pool.
     void Setup(std::vector<const char*> instance_extensions);
@@ -63,7 +65,7 @@ private:
                                      const char* extension);
 
 #ifdef APP_USE_VULKAN_DEBUG_REPORT
-    VkDebugReportCallbackEXT DebugReport = VK_NULL_HANDLE;
+    VkDebugReportCallbackEXT DebugReport;
     static VKAPI_ATTR VkBool32 VKAPI_CALL DebugReportCallback(
         VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT objectType,
         uint64_t object, size_t location, int32_t messageCode,

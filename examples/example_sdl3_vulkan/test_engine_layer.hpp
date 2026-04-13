@@ -13,8 +13,10 @@
 class TestEngineLayer
 {
 public:
-    ImGuiTestEngine* Engine     = nullptr;
-    bool             ShowWindow = true;
+    TestEngineLayer();
+
+    ImGuiTestEngine* Engine;
+    bool             ShowWindow;
 
     // Create the engine, bind it to the current ImGui context, register tests.
     void Init();

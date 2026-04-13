@@ -11,8 +11,10 @@ class ImGuiLayer; // forward declaration — avoids circular include
 class SDLWindow
 {
 public:
-    SDL_Window* Window    = nullptr;
-    float       MainScale = 1.0f;
+    SDLWindow();
+
+    SDL_Window* Window;
+    float       MainScale;
 
     // Initialise SDL, create the window, compute DPI scale.  Returns false on error.
     bool Init(const char* title, int width, int height);

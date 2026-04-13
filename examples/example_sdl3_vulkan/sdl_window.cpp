@@ -1,12 +1,17 @@
 #include "sdl_window.hpp"
 #include "imgui_layer.hpp"   // needed for ImGuiLayer::ProcessEvent in PollEvents
-#include <cstdio>            // printf
+#include <print>
+
+SDLWindow::SDLWindow()
+    : Window{nullptr}
+    , MainScale{1.0f}
+{}
 
 bool SDLWindow::Init(const char* title, int width, int height)
 {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))
     {
-        std::printf("Error: SDL_Init(): %s\n", SDL_GetError());
+        std::println("Error: SDL_Init(): {}", SDL_GetError());
         return false;
     }
 
@@ -22,7 +27,7 @@ bool SDLWindow::Init(const char* title, int width, int height)
                               window_flags);
     if (Window == nullptr)
     {
-        std::printf("Error: SDL_CreateWindow(): %s\n", SDL_GetError());
+        std::println("Error: SDL_CreateWindow(): {}", SDL_GetError());
         return false;
     }
     return true;
@@ -51,7 +56,7 @@ VkSurfaceKHR SDLWindow::CreateVulkanSurface(VkInstance instance,
     VkSurfaceKHR surface = VK_NULL_HANDLE;
     if (SDL_Vulkan_CreateSurface(Window, instance, allocator, &surface) == 0)
     {
-        std::printf("Failed to create Vulkan surface.\n");
+        std::println("Failed to create Vulkan surface.");
         return VK_NULL_HANDLE;
     }
     return surface;

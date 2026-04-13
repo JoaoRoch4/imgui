@@ -44,7 +44,7 @@ ImGuiConsole::ImGuiConsole()
 	, HistoryPos{-1}
 	, AutoScroll{true}
 	, ScrollToBottom{false}
-	, SelectedItem_{nullptr}
+	, SelectedItem_{}
 	, Alive_{std::make_shared<std::atomic<bool>>(true)}
 	, BashJobCount_{0}
 {
@@ -55,17 +55,13 @@ ImGuiConsole::~ImGuiConsole() {
 	// Signal any running background threads that the console is gone.
 	*Alive_ = false;
 	ClearLog();
-	for (int i = 0; i < static_cast<int>(History.size()); i++)
-		std::free(History.at(i));
 }
 
 // ─── ClearLog ────────────────────────────────────────────────────────────────
 
 void ImGuiConsole::ClearLog() {
-	for (int i = 0; i < static_cast<int>(Items.size()); i++)
-		std::free(Items.at(i));
 	Items.clear();
-	SelectedItem_ = nullptr;
+	SelectedItem_.clear();
 }
 
 // ─── AddLog ──────────────────────────────────────────────────────────────────
@@ -77,7 +73,7 @@ void ImGuiConsole::AddLog(const char *fmt, ...) {
 	std::vsnprintf(buf.data(), buf.size(), fmt, args);
 	buf.at(buf.size() - 1) = '\0';
 	va_end(args);
-	Items.push_back(Strdup(buf.data()));
+	Items.emplace_back(buf.data());
 }
 
 // ─── RegisterCommand ─────────────────────────────────────────────────────────
@@ -102,12 +98,11 @@ void ImGuiConsole::ExecCommand(const char *command_line) {
 	// ─────────────────────────────
 	HistoryPos = -1;
 	for (int i = static_cast<int>(History.size()) - 1; i >= 0; i--)
-		if (Stricmp(History.at(i), command_line) == 0) {
-			std::free(History.at(i));
+		if (Stricmp(History.at(i).c_str(), command_line) == 0) {
 			History.erase(History.begin() + i);
 			break;
 		}
-	History.push_back(Strdup(command_line));
+	History.emplace_back(command_line);
 
 	// ── Tokenise on whitespace
 	// ────────────────────────────────────────────────
@@ -140,9 +135,8 @@ void ImGuiConsole::ExecCommand(const char *command_line) {
 		++raw_start;
 
 	std::vector<std::string> args_vec(tokens.begin() + 1, tokens.end());
-	std::span<const std::string> args_span(args_vec);
 
-	ConsoleCommandArgs cargs{std::string_view(tokens.at(0)), args_span,
+	ConsoleCommandArgs cargs{std::string_view(tokens.at(0)), std::move(args_vec),
 							 std::string_view(raw_start)};
 
 	// ── Dispatch
@@ -224,34 +218,34 @@ void ImGuiConsole::DrawContents(const char *id) {
 			ImGui::LogToClipboard();
 
 		int display_idx = 0;
-		for (const char *item : Items) {
-			if (!Filter.PassFilter(item))
+		for (const auto &item : Items) {
+			if (!Filter.PassFilter(item.c_str()))
 				continue;
 
 			ImVec4 color = {};
 			bool has_color = false;
-			if (std::strstr(item, "[error]")) {
+			if (std::strstr(item.c_str(), "[error]")) {
 				color = {1.0f, 0.4f, 0.4f, 1.0f};
 				has_color = true;
-			} else if (std::strstr(item, "[warn]")) {
+			} else if (std::strstr(item.c_str(), "[warn]")) {
 				color = {1.0f, 1.0f, 0.4f, 1.0f};
 				has_color = true;
-			} else if (std::strncmp(item, "# ", 2) == 0) {
+			} else if (std::strncmp(item.c_str(), "# ", 2) == 0) {
 				color = {1.0f, 0.8f, 0.6f, 1.0f};
 				has_color = true;
-			} else if (std::strncmp(item, "$ ", 2) == 0) {
+			} else if (std::strncmp(item.c_str(), "$ ", 2) == 0) {
 				color = {0.4f, 1.0f, 0.4f, 1.0f};
 				has_color = true;
 			}
 
 			bool is_selected = (item == SelectedItem_);
 			ImGui::PushID(display_idx++);
-			if (item[0] == '\x01') {
+			if (item.at(0) == '\x01') {
 				// Two-column command listing: \x01NAME\tDESCRIPTION
-				const char *tab = std::strchr(item + 1, '\t');
+				const char *tab = std::strchr(item.c_str() + 1, '\t');
 				if (tab) {
 					ImGui::TextColored({1.0f, 1.0f, 0.0f, 1.0f}, "%.*s",
-									   static_cast<int>(tab - (item + 1)), item + 1);
+									   static_cast<int>(tab - (item.c_str() + 1)), item.c_str() + 1);
 					ImGui::SameLine(120.0f);
 					const char *desc = tab + 1;
 					size_t dl = std::strlen(desc);
@@ -259,15 +253,15 @@ void ImGuiConsole::DrawContents(const char *id) {
 					ImGui::TextColored({0.4f, 1.0f, 0.4f, 1.0f}, "%.*s",
 									   static_cast<int>(dl), desc);
 				} else {
-					ImGui::TextColored({1.0f, 1.0f, 0.0f, 1.0f}, "%s", item + 1);
+					ImGui::TextColored({1.0f, 1.0f, 0.0f, 1.0f}, "%s", item.c_str() + 1);
 				}
 			} else {
 				if (has_color)
 					ImGui::PushStyleColor(ImGuiCol_Text, color);
-				if (ImGui::Selectable(item, is_selected,
+				if (ImGui::Selectable(item.c_str(), is_selected,
 									  ImGuiSelectableFlags_None)) {
 					SelectedItem_ = item;
-					ImGui::SetClipboardText(item);
+					ImGui::SetClipboardText(item.c_str());
 				}
 				if (ImGui::IsItemHovered())
 					ImGui::SetTooltip("Click to copy");
@@ -469,7 +463,10 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 					HistoryPos = -1;
 		}
 		if (prev != HistoryPos) {
-			const char *entry = HistoryPos >= 0 ? History.at(HistoryPos) : "";
+			const char *entry =
+				HistoryPos >= 0
+					? History.at(static_cast<std::size_t>(HistoryPos)).c_str()
+					: "";
 			data->DeleteChars(0, data->BufTextLen);
 			data->InsertChars(0, entry);
 		}
@@ -496,14 +493,6 @@ int ImGuiConsole::Strnicmp(const char *s1, const char *s2, int n) {
 		   *s1)
 		--n, ++s1, ++s2;
 	return d;
-}
-
-char *ImGuiConsole::Strdup(const char *s) {
-	IM_ASSERT(s);
-	size_t len = std::strlen(s) + 1;
-	void *buf = std::malloc(len);
-	IM_ASSERT(buf);
-	return static_cast<char *>(std::memcpy(buf, s, len));
 }
 
 void ImGuiConsole::Strtrim(char *s) {
@@ -572,7 +561,7 @@ void ConsoleCommands::CmdHelp(const ConsoleCommandArgs & /*a*/) {
 void ConsoleCommands::CmdHistory(const ConsoleCommandArgs & /*a*/) {
 	int first = static_cast<int>(History.size()) - 10;
 	for (int i = (first < 0 ? 0 : first); i < static_cast<int>(History.size()); ++i)
-		AddLog("%3d: %s\n", i, History.at(i));
+		AddLog("%3d: %s\n", i, History.at(static_cast<std::size_t>(i)).c_str());
 }
 
 // ── CLEAR ────────────────────────────────────────────────────────────────────
@@ -602,7 +591,7 @@ void ConsoleCommands::CmdStyle(const ConsoleCommandArgs &a) {
 		AddLog("[error] Usage: STYLE DARK|LIGHT|CLASSIC\n");
 		return;
 	}
-	std::string which = a.args[0];
+	std::string which = a.args.at(0);
 	for (char &c : which)
 		c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
 
@@ -623,7 +612,7 @@ void ConsoleCommands::CmdStyle(const ConsoleCommandArgs &a) {
 		AddLog("Style: Classic\n");
 	} else
 		AddLog("[error] Unknown style '%s'. Use DARK, LIGHT or CLASSIC.\n",
-			   a.args[0].c_str());
+			   a.args.at(0).c_str());
 }
 
 // ── DEMO ─────────────────────────────────────────────────────────────────────
@@ -633,7 +622,7 @@ void ConsoleCommands::CmdDemo(const ConsoleCommandArgs &a) {
 		AddLog("[error] Usage: DEMO ON|OFF\n");
 		return;
 	}
-	std::string which = a.args[0];
+	std::string which = a.args.at(0);
 	for (char &c : which)
 		c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
 
@@ -647,7 +636,7 @@ void ConsoleCommands::CmdDemo(const ConsoleCommandArgs &a) {
 		AddLog("Demo window: OFF\n");
 	} else
 		AddLog("[error] Unknown argument '%s'. Use ON or OFF.\n",
-			   a.args[0].c_str());
+			   a.args.at(0).c_str());
 }
 
 // ── LOG ──────────────────────────────────────────────────────────────────────
@@ -656,7 +645,7 @@ void ConsoleCommands::CmdLog(const ConsoleCommandArgs &a) {
 	int n = 20;
 	if (!a.args.empty()) {
 		try {
-			n = std::stoi(a.args[0]);
+			n = std::stoi(a.args.at(0));
 		} catch (...) {
 			AddLog("[error] LOG: invalid line count\n");
 			return;
@@ -697,10 +686,10 @@ void ConsoleCommands::CmdSet(const ConsoleCommandArgs &a) {
 	for (size_t i = 1; i < a.args.size(); ++i) {
 		if (i > 1)
 			value += ' ';
-		value += a.args[i];
+		value += a.args.at(i);
 	}
-	Variables[a.args[0]] = value;
-	AddLog("SET %s = %s\n", a.args[0].c_str(), value.c_str());
+	Variables.insert_or_assign(a.args.at(0), value);
+	AddLog("SET %s = %s\n", a.args.at(0).c_str(), value.c_str());
 }
 
 // ── GET ──────────────────────────────────────────────────────────────────────
@@ -715,11 +704,11 @@ void ConsoleCommands::CmdGet(const ConsoleCommandArgs &a) {
 			AddLog("  %s = %s\n", k.c_str(), v.c_str());
 		return;
 	}
-	auto it = Variables.find(a.args[0]);
+	auto it = Variables.find(a.args.at(0));
 	if (it == Variables.end())
-		AddLog("[error] Undefined variable '%s'\n", a.args[0].c_str());
+		AddLog("[error] Undefined variable '%s'\n", a.args.at(0).c_str());
 	else
-		AddLog("%s = %s\n", a.args[0].c_str(), it->second.c_str());
+		AddLog("%s = %s\n", a.args.at(0).c_str(), it->second.c_str());
 }
 
 // ── QUIT ─────────────────────────────────────────────────────────────────────
@@ -1088,30 +1077,30 @@ static std::string StripAnsi(const std::string &in) {
 	out.reserve(in.size());
 	size_t i = 0;
 	while (i < in.size()) {
-		if (in[i] == '\x1b') {
+		if (in.at(i) == '\x1b') {
 			++i;
 			if (i >= in.size())
 				break;
-			if (in[i] == '[') // CSI: ESC [ params final
+			if (in.at(i) == '[') // CSI: ESC [ params final
 			{
 				++i;
-				while (i < in.size() && (in[i] < 0x40 || in[i] > 0x7e))
+				while (i < in.size() && (in.at(i) < 0x40 || in.at(i) > 0x7e))
 					++i;
 				if (i < in.size())
 					++i;
-			} else if (in[i] == ']') // OSC: ESC ] ... ST/BEL
+			} else if (in.at(i) == ']') // OSC: ESC ] ... ST/BEL
 			{
 				++i;
-				while (i < in.size() && in[i] != '\x07' && in[i] != '\x1b')
+				while (i < in.size() && in.at(i) != '\x07' && in.at(i) != '\x1b')
 					++i;
-				if (i < in.size() && in[i] == '\x07')
+				if (i < in.size() && in.at(i) == '\x07')
 					++i;
-				else if (i < in.size() && in[i] == '\x1b') {
+				else if (i < in.size() && in.at(i) == '\x1b') {
 					++i;
 					if (i < in.size())
 						++i;
 				}
-			} else if (in[i] == '(' || in[i] == ')') // charset designation
+			} else if (in.at(i) == '(' || in.at(i) == ')') // charset designation
 			{
 				++i;
 				if (i < in.size())
@@ -1119,16 +1108,16 @@ static std::string StripAnsi(const std::string &in) {
 			} else {
 				++i;
 			} // two-char escape (ESC M, ESC c …)
-		} else if (in[i] == '\x07') {
+		} else if (in.at(i) == '\x07') {
 			++i;
-		}                         // BEL — discard
-		else if (in[i] == '\x08') // BS — remove last char
+		}                           // BEL — discard
+		else if (in.at(i) == '\x08') // BS — remove last char
 		{
 			if (!out.empty())
 				out.pop_back();
 			++i;
 		} else {
-			out += in[i++];
+			out += in.at(i++);
 		}
 	}
 	return out;

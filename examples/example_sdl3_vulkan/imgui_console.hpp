@@ -6,7 +6,6 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -26,7 +25,7 @@ class ImGuiConsole;
 struct ConsoleCommandArgs
 {
     std::string_view             name;     // upper-cased command name
-    std::span<const std::string> args;     // tokenised arguments
+    std::vector<std::string>      args;     // tokenised arguments
     std::string_view             raw_args; // raw tail of input after command name
 };
 
@@ -85,21 +84,20 @@ public:
 
 protected:
     std::array<char, 512>           InputBuf;
-    std::vector<char*>                Items;
+    std::vector<std::string>          Items;
     std::vector<ConsoleCommandDef> Commands;
-    std::vector<char*>                History;
+    std::vector<std::string>          History;
     int                            HistoryPos;
     ImGuiTextFilter                Filter;
     bool                           AutoScroll;
     bool                           ScrollToBottom;
-    const char*                    SelectedItem_; // points into Items; nullptr = no selection
+    std::string                    SelectedItem_; // selected log line (empty = none)
 
     static int   TextEditCallbackStub(ImGuiInputTextCallbackData* data);
     int          TextEditCallback(ImGuiInputTextCallbackData* data);
 
     static int   Stricmp(const char* s1, const char* s2);
     static int   Strnicmp(const char* s1, const char* s2, int n);
-    static char* Strdup(const char* s);
     static void  Strtrim(char* s);
 
     // Thread-safe log queue: background threads push here; Draw() flushes.

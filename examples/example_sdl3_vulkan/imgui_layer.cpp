@@ -87,7 +87,7 @@ void ImGuiLayer::DrawTerminals()
     }
     if (ImGui::BeginTabBar("##termtabs"))
     {
-        for (int i = 0; i < (int)Terminals.size(); )
+        for (int i = 0; i < static_cast<int>(Terminals.size()); )
         {
             TerminalTab& t = Terminals[i];
             bool open = t.open;
@@ -153,7 +153,7 @@ void ImGuiLayer::BuildUI()
         ImGui::Checkbox("Debug Log",      &ShowDebugLogMirrorWindow);
         ImGui::Checkbox("Terminals",        &ShowTerminalWindow);
         ImGui::SliderFloat("float", &f, 0.0f, 1.0f);
-        ImGui::ColorEdit3("clear color", (float*)&ClearColor);
+        ImGui::ColorEdit3("clear color", &ClearColor.x);
         if (ImGui::Button("Button"))
             counter++;
         ImGui::SameLine();

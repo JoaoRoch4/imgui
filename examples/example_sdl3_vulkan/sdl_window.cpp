@@ -17,8 +17,8 @@ bool SDLWindow::Init(const char* title, int width, int height)
         SDL_WINDOW_HIDDEN | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 
     Window = SDL_CreateWindow(title,
-                              (int)(width  * MainScale),
-                              (int)(height * MainScale),
+                              static_cast<int>(width  * MainScale),
+                              static_cast<int>(height * MainScale),
                               window_flags);
     if (Window == nullptr)
     {

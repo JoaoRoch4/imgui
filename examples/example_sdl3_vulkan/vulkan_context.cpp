@@ -76,7 +76,7 @@ void VulkanContext::Setup(ImVector<const char*> instance_extensions)
         create_info.ppEnabledLayerNames = layers;
         instance_extensions.push_back("VK_EXT_debug_report");
 #endif
-        create_info.enabledExtensionCount  = (uint32_t)instance_extensions.Size;
+        create_info.enabledExtensionCount  = static_cast<uint32_t>(instance_extensions.Size);
         create_info.ppEnabledExtensionNames = instance_extensions.Data;
         err = vkCreateInstance(&create_info, Allocator, &Instance);
         CheckVkResult(err);
@@ -85,7 +85,7 @@ void VulkanContext::Setup(ImVector<const char*> instance_extensions)
 #endif
 #ifdef APP_USE_VULKAN_DEBUG_REPORT
         auto f_vkCreateDebugReportCallbackEXT =
-            (PFN_vkCreateDebugReportCallbackEXT)vkGetInstanceProcAddr(Instance, "vkCreateDebugReportCallbackEXT");
+            reinterpret_cast<PFN_vkCreateDebugReportCallbackEXT>(vkGetInstanceProcAddr(Instance, "vkCreateDebugReportCallbackEXT"));
         IM_ASSERT(f_vkCreateDebugReportCallbackEXT != nullptr);
         VkDebugReportCallbackCreateInfoEXT debug_report_ci = {};
         debug_report_ci.sType    = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT;
@@ -128,7 +128,7 @@ void VulkanContext::Setup(ImVector<const char*> instance_extensions)
         create_info.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         create_info.queueCreateInfoCount    = sizeof(queue_info) / sizeof(queue_info[0]);
         create_info.pQueueCreateInfos       = queue_info;
-        create_info.enabledExtensionCount   = (uint32_t)device_extensions.Size;
+        create_info.enabledExtensionCount   = static_cast<uint32_t>(device_extensions.Size);
         create_info.ppEnabledExtensionNames = device_extensions.Data;
         err = vkCreateDevice(PhysicalDevice, &create_info, Allocator, &Device);
         CheckVkResult(err);
@@ -147,7 +147,7 @@ void VulkanContext::Setup(ImVector<const char*> instance_extensions)
         pool_info.maxSets       = 0;
         for (VkDescriptorPoolSize& s : pool_sizes)
             pool_info.maxSets += s.descriptorCount;
-        pool_info.poolSizeCount = (uint32_t)IM_COUNTOF(pool_sizes);
+        pool_info.poolSizeCount = static_cast<uint32_t>(IM_COUNTOF(pool_sizes));
         pool_info.pPoolSizes    = pool_sizes;
         err = vkCreateDescriptorPool(Device, &pool_info, Allocator, &DescriptorPool);
         CheckVkResult(err);
@@ -174,7 +174,7 @@ void VulkanContext::SetupWindow(VkSurfaceKHR surface, int width, int height)
     wd->Surface       = surface;
     wd->SurfaceFormat = ImGui_ImplVulkanH_SelectSurfaceFormat(
         PhysicalDevice, wd->Surface,
-        requestSurfaceImageFormat, (size_t)IM_COUNTOF(requestSurfaceImageFormat),
+        requestSurfaceImageFormat, static_cast<size_t>(IM_COUNTOF(requestSurfaceImageFormat)),
         requestSurfaceColorSpace);
 
 #ifdef APP_USE_UNLIMITED_FRAME_RATE

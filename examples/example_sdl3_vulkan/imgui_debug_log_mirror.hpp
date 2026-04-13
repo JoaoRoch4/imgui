@@ -78,7 +78,7 @@ public:
             return;
         const char* begin = g.DebugLogBuf.begin() + m_last_buf_size;
         const int   len   = cur - m_last_buf_size;
-        fwrite(begin, 1, (size_t)len, m_file);
+        fwrite(begin, 1, static_cast<size_t>(len), m_file);
         fflush(m_file);
         m_last_buf_size = cur;
     }

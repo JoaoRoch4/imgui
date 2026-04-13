@@ -433,12 +433,11 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 			for (;;) {
 				int c = 0;
 				bool all_match = true;
-				for (int i = 0; i < static_cast<int>(candidates.size()) && all_match; ++i) {
+			for (int i = 0; i < static_cast<int>(candidates.size()) && all_match; ++i) {
+					const char ch = Commands.at(static_cast<std::size_t>(candidates.at(static_cast<std::size_t>(i)))).name.at(static_cast<std::size_t>(match_len));
 					if (i == 0)
-						c = toupper(static_cast<unsigned char>(Commands[candidates[i]].name[match_len]));
-					else if (c == 0 ||
-							 c != toupper(
-									  static_cast<unsigned char>(Commands[candidates[i]].name[match_len])))
+						c = toupper(static_cast<unsigned char>(ch));
+					else if (c == 0 || c != toupper(static_cast<unsigned char>(ch)))
 						all_match = false;
 				}
 				if (!all_match)
@@ -684,7 +683,7 @@ void ConsoleCommands::CmdLog(const ConsoleCommandArgs &a) {
 	AddLog("── /tmp/imgui_debug.log (last %d lines) ──\n",
 		   static_cast<int>(lines.size()) - start);
 	for (int i = start; i < static_cast<int>(lines.size()); ++i)
-		AddLog("%s\n", lines[i].c_str());
+		AddLog("%s\n", lines.at(static_cast<std::size_t>(i)).c_str());
 }
 
 // ── SET ──────────────────────────────────────────────────────────────────────

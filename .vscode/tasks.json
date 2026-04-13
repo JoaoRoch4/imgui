@@ -12,7 +12,9 @@
                 }
             },
             "group": "build",
-            "problemMatcher": ["$gcc"],
+            "problemMatcher": [
+                "$gcc"
+            ],
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
@@ -32,14 +34,14 @@
                 "kind": "build",
                 "isDefault": true
             },
-            "problemMatcher": ["$gcc"],
+            "problemMatcher": [
+                "$gcc"
+            ],
             "presentation": {
                 "reveal": "silent",
                 "panel": "shared"
             }
         },
-
-        // ── Debug log tail ───────────────────────────────────────────────────
         {
             "label": "tail: debug log",
             "type": "shell",
@@ -47,7 +49,9 @@
             "isBackground": true,
             "problemMatcher": {
                 "owner": "tail-debug-log",
-                "pattern": { "regexp": "x^" },
+                "pattern": {
+                    "regexp": "x^"
+                },
                 "background": {
                     "activeOnStart": true,
                     "beginsPattern": ".",
@@ -61,15 +65,14 @@
                 "clear": true
             }
         },
-
-        // ── Compound: build + start tail in parallel ─────────────────────────
         {
             "label": "build + tail debug log",
-            "dependsOn": ["make: example_sdl3_vulkan", "tail: debug log"],
+            "dependsOn": [
+                "make: example_sdl3_vulkan",
+                "tail: debug log"
+            ],
             "dependsOrder": "parallel"
         },
-
-        // ── CMake tasks ──────────────────────────────────────────────────────────
         {
             "label": "cmake: configure",
             "type": "shell",
@@ -81,7 +84,9 @@
                 }
             },
             "group": "build",
-            "problemMatcher": ["$gcc"],
+            "problemMatcher": [
+                "$gcc"
+            ],
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"
@@ -98,7 +103,9 @@
                 }
             },
             "group": "build",
-            "problemMatcher": ["$gcc"],
+            "problemMatcher": [
+                "$gcc"
+            ],
             "presentation": {
                 "reveal": "silent",
                 "panel": "shared"
@@ -117,12 +124,28 @@
             "group": "build",
             "problemMatcher": []
         },
-
-        // ── CMake compound: build + tail ─────────────────────────────────────────
+        {
+            "label": "cmake: rebuild (debug)",
+            "dependsOn": [
+                "cmake: clean",
+                "cmake: build (debug)"
+            ],
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
         {
             "label": "cmake: build + tail debug log",
-            "dependsOn": ["cmake: build (debug)", "tail: debug log"],
-            "dependsOrder": "parallel"
+            "dependsOn": [
+                "cmake: build (debug)",
+                "tail: debug log"
+            ],
+            "dependsOrder": "parallel",
+            "problemMatcher": [
+                "$codelldb-rustc"
+            ]
         }
     ]
 }

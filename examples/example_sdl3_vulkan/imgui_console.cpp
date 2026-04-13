@@ -244,17 +244,34 @@ void ImGuiConsole::DrawContents(const char *id) {
 
 			bool is_selected = (item == SelectedItem_);
 			ImGui::PushID(display_idx++);
-			if (has_color)
-				ImGui::PushStyleColor(ImGuiCol_Text, color);
-			if (ImGui::Selectable(item, is_selected,
-								  ImGuiSelectableFlags_None)) {
-				SelectedItem_ = item;
-				ImGui::SetClipboardText(item);
+			if (item[0] == '\x01') {
+				// Two-column command listing: \x01NAME\tDESCRIPTION
+				const char *tab = strchr(item + 1, '\t');
+				if (tab) {
+					ImGui::TextColored({1.0f, 1.0f, 0.0f, 1.0f}, "%.*s",
+									   (int)(tab - (item + 1)), item + 1);
+					ImGui::SameLine(120.0f);
+					const char *desc = tab + 1;
+					size_t dl = strlen(desc);
+					while (dl > 0 && (desc[dl-1] == '\n' || desc[dl-1] == '\r')) --dl;
+					ImGui::TextColored({0.4f, 1.0f, 0.4f, 1.0f}, "%.*s",
+									   (int)dl, desc);
+				} else {
+					ImGui::TextColored({1.0f, 1.0f, 0.0f, 1.0f}, "%s", item + 1);
+				}
+			} else {
+				if (has_color)
+					ImGui::PushStyleColor(ImGuiCol_Text, color);
+				if (ImGui::Selectable(item, is_selected,
+									  ImGuiSelectableFlags_None)) {
+					SelectedItem_ = item;
+					ImGui::SetClipboardText(item);
+				}
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Click to copy");
+				if (has_color)
+					ImGui::PopStyleColor();
 			}
-			if (ImGui::IsItemHovered())
-				ImGui::SetTooltip("Click to copy");
-			if (has_color)
-				ImGui::PopStyleColor();
 			ImGui::PopID();
 		}
 
@@ -406,7 +423,7 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 							  (int)(word_end - word_start));
 			data->InsertChars(data->CursorPos, Commands[candidates[0]].name.c_str());
 			data->InsertChars(data->CursorPos, " ");
-			AddLog("  %s\t%s\n",
+			AddLog("\x01%s\t%s\n",
 				   Commands[candidates[0]].name.c_str(),
 				   Commands[candidates[0]].description.c_str());
 		} else {
@@ -435,7 +452,7 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 			}
 			AddLog("Possible completions:\n");
 			for (int i = 0; i < candidates.Size; ++i)
-				AddLog("  %s\t%s\n",
+				AddLog("\x01%s\t%s\n",
 					   Commands[candidates[i]].name.c_str(),
 					   Commands[candidates[i]].description.c_str());
 		}
@@ -547,7 +564,7 @@ ConsoleCommands::ConsoleCommands() {
 void ConsoleCommands::CmdHelp(const ConsoleCommandArgs & /*a*/) {
 	AddLog("Available commands:\n");
 	for (const auto &cmd : Commands)
-		AddLog("  %s\t%s\n", cmd.name.c_str(), cmd.description.c_str());
+		AddLog("\x01%s\t%s\n", cmd.name.c_str(), cmd.description.c_str());
 }
 
 // ── HISTORY ──────────────────────────────────────────────────────────────────

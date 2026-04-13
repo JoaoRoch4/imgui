@@ -14,22 +14,25 @@
 class ImGuiLayer
 {
 public:
+    ImGuiLayer();
+
     // State exposed to the render loop (clear colour is passed to VulkanContext).
-    bool   ShowDemoWindow    = true;
-    bool   ShowAnotherWindow = false;
-    bool   ShowDebugLogMirrorWindow = true;
-    bool   ShowTerminalWindow = true;
-    bool   RequestQuit       = false;
-    ImVec4 ClearColor        = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+    bool   ShowDemoWindow;
+    bool   ShowAnotherWindow;
+    bool   ShowDebugLogMirrorWindow;
+    bool   ShowTerminalWindow;
+    bool   RequestQuit;
+    ImVec4 ClearColor;
 
     // Realtime file mirror of the Dear ImGui debug log (tail -f friendly).
     ImGuiDebugLogMirror DebugLogMirror;
 
     // Terminal tabs — each entry owns an independent ConsoleCommands instance.
     struct TerminalTab {
+        TerminalTab();
         std::string                      name;
         std::unique_ptr<ConsoleCommands> console;
-        bool                             open = true;
+        bool                             open;
     };
     std::vector<TerminalTab> Terminals;
 

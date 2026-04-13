@@ -91,7 +91,7 @@ protected:
     ImGuiTextFilter                Filter;
     bool                           AutoScroll;
     bool                           ScrollToBottom;
-    const char*                    SelectedItem_ = nullptr; // points into Items; nullptr = no selection
+    const char*                    SelectedItem_; // points into Items; nullptr = no selection
 
     static int   TextEditCallbackStub(ImGuiInputTextCallbackData* data);
     int          TextEditCallback(ImGuiInputTextCallbackData* data);
@@ -107,11 +107,10 @@ protected:
     void FlushPendingLogs();
 
     // Shared alive flag: background threads check this before touching *this.
-    std::shared_ptr<std::atomic<bool>> Alive_ =
-        std::make_shared<std::atomic<bool>>(true);
+    std::shared_ptr<std::atomic<bool>> Alive_;
 
     // Count of bash jobs currently in flight.
-    std::atomic<int> BashJobCount_{0};
+    std::atomic<int> BashJobCount_;
 
     // Active PTY session — non-null while a BASH command is running.
     // Protected by BashSessionMutex_ for pointer swap; the BashSession fields

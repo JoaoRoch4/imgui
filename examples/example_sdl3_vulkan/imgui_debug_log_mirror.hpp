@@ -119,13 +119,13 @@ public:
             if (ImGui::SmallButton("Open dir"))
             {
                 // best-effort: strip filename from path
-                char dir[512];
+                char dir[512]{};
                 std::strncpy(dir, m_path, sizeof(dir) - 1);
                 char* last_sep = std::strrchr(dir, '/');
                 if (!last_sep) last_sep = std::strrchr(dir, '\\');
                 if (last_sep) *last_sep = '\0';
                 // Not cross-platform, but harmless on non-Linux
-                char cmd[600];
+                char cmd[600]{};
                 std::snprintf(cmd, sizeof(cmd), "xdg-open \"%s\" &", dir);
                 std::ignore = std::system(cmd);
             }

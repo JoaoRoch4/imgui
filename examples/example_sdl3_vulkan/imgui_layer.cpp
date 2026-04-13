@@ -1,6 +1,19 @@
 #include "imgui_layer.hpp"
 #include "../../misc/freetype/imgui_freetype.h"
 
+ImGuiLayer::ImGuiLayer()
+    : ShowDemoWindow{true}
+    , ShowAnotherWindow{false}
+    , ShowDebugLogMirrorWindow{true}
+    , ShowTerminalWindow{true}
+    , RequestQuit{false}
+    , ClearColor{0.45f, 0.55f, 0.60f, 1.00f}
+{}
+
+ImGuiLayer::TerminalTab::TerminalTab()
+    : open{true}
+{}
+
 void ImGuiLayer::Init(SDL_Window* window, ImGui_ImplVulkan_InitInfo& init_info, float main_scale)
 {
     IMGUI_CHECKVERSION();
@@ -91,11 +104,11 @@ void ImGuiLayer::DrawTerminals()
         {
             TerminalTab& t = Terminals[i];
             bool open = t.open;
-            char label[64];
+            char label[64]{};
             std::snprintf(label, sizeof(label), "%s##tab%d", t.name.c_str(), i);
             if (ImGui::BeginTabItem(label, &open))
             {
-                char id[16];
+                char id[16]{};
                 std::snprintf(id, sizeof(id), "%d", i);
                 t.console->DrawContents(id);
                 ImGui::EndTabItem();

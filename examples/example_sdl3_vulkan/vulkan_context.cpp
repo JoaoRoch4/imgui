@@ -45,7 +45,7 @@ bool VulkanContext::IsExtensionAvailable(const std::vector<VkExtensionProperties
 
 void VulkanContext::Setup(std::vector<const char*> instance_extensions)
 {
-    VkResult err;
+    VkResult err{};
 #ifdef IMGUI_IMPL_VULKAN_USE_VOLK
     volkInitialize();
 #endif
@@ -55,7 +55,7 @@ void VulkanContext::Setup(std::vector<const char*> instance_extensions)
         VkInstanceCreateInfo create_info = {};
         create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 
-        uint32_t properties_count;
+        uint32_t properties_count{};
         std::vector<VkExtensionProperties> properties;
         vkEnumerateInstanceExtensionProperties(nullptr, &properties_count, nullptr);
         properties.resize(properties_count);
@@ -110,7 +110,7 @@ void VulkanContext::Setup(std::vector<const char*> instance_extensions)
         std::vector<const char*> device_extensions;
         device_extensions.push_back("VK_KHR_swapchain");
 
-        uint32_t properties_count;
+        uint32_t properties_count{};
         std::vector<VkExtensionProperties> properties;
         vkEnumerateDeviceExtensionProperties(PhysicalDevice, nullptr, &properties_count, nullptr);
         properties.resize(properties_count);
@@ -159,7 +159,7 @@ void VulkanContext::SetupWindow(VkSurfaceKHR surface, int width, int height)
 {
     ImGui_ImplVulkanH_Window* wd = &MainWindowData;
 
-    VkBool32 res;
+    VkBool32 res{};
     vkGetPhysicalDeviceSurfaceSupportKHR(PhysicalDevice, QueueFamily, surface, &res);
     if (res != VK_TRUE)
     {

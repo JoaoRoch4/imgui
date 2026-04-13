@@ -108,12 +108,12 @@ use with AI coding assistants.
 
 ## Branch
 
-Active development lives on `feature/mcp-agents-and-cpp-tools`.  
+Active development lives on `feature/mcp-agents-and-cpp-tools`.
 Upstream tracking: `ocornut/imgui` — synced periodically.
 
 ---
 
 ## License
 
-Dear ImGui is MIT licensed. See [LICENSE.txt](LICENSE.txt).  
+Dear ImGui is MIT licensed. See [LICENSE.txt](LICENSE.txt).
 Fork additions in `examples/example_sdl3_vulkan/` and `agents/` are also MIT.

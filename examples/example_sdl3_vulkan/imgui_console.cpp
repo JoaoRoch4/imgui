@@ -39,13 +39,15 @@ struct BashSession {
 // ImGuiConsole — core
 // ══════════════════════════════════════════════════════════════════════════════
 
-ImGuiConsole::ImGuiConsole() {
-	*InputBuf = static_cast<char>('\0');
-	std::memset(InputBuf, 0, sizeof(InputBuf));
-	HistoryPos = -1;
-	AutoScroll = true;
-	ScrollToBottom = false;
-	SelectedItem_ = nullptr;
+ImGuiConsole::ImGuiConsole()
+	: InputBuf{}
+	, HistoryPos{-1}
+	, AutoScroll{true}
+	, ScrollToBottom{false}
+	, SelectedItem_{nullptr}
+	, Alive_{std::make_shared<std::atomic<bool>>(true)}
+	, BashJobCount_{0}
+{
 	AddLog("Console ready. Type HELP for a list of commands.\n");
 }
 
@@ -69,7 +71,7 @@ void ImGuiConsole::ClearLog() {
 // ─── AddLog ──────────────────────────────────────────────────────────────────
 
 void ImGuiConsole::AddLog(const char *fmt, ...) {
-	char buf[4096];
+	char buf[4096]{};
 	va_list args;
 	va_start(args, fmt);
 	std::vsnprintf(buf, IM_ARRAYSIZE(buf), fmt, args);
@@ -383,7 +385,7 @@ void ImGuiConsole::Draw(const char *title, bool *p_open) {
 		ImGui::End();
 		return;
 	}
-	char uid[24];
+	char uid[24]{};
 	std::snprintf(uid, sizeof(uid), "%p", static_cast<void *>(this));
 	DrawContents(uid);
 	ImGui::End();
@@ -480,7 +482,7 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 // ─── Static helpers ──────────────────────────────────────────────────────────
 
 int ImGuiConsole::Stricmp(const char *s1, const char *s2) {
-	int d;
+	int d{};
 	while ((d = toupper(static_cast<unsigned char>(*s2)) - toupper(static_cast<unsigned char>(*s1))) ==
 			   0 &&
 		   *s1)
@@ -818,7 +820,7 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
 	// ── Worker thread: read PTY output and detect password prompts
 	// ────────────
 	std::thread worker([this, session, alive, pid]() {
-		char buf[512];
+		char buf[512]{};
 		std::string partial; // accumulates bytes before the next newline
 
 		while (true) {
@@ -853,7 +855,7 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
 					partial += buf[i];
 
 			// Flush every complete line to the log.
-			size_t pos;
+			size_t pos{};
 			while ((pos = partial.find('\n')) != std::string::npos) {
 				if (alive->load())
 					AddLogThreadSafe(partial.substr(0, pos) + "\n");
@@ -962,7 +964,7 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs &a) {
 		return;
 	}
 
-	char slave_name[256];
+	char slave_name[256]{};
 	if (ptsname_r(master_fd, slave_name, sizeof(slave_name)) != 0) {
 		close(master_fd);
 		AddLog("[error] ptsname_r: %s\n", strerror(errno));
@@ -1036,7 +1038,7 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs &a) {
 			for (ssize_t i = 0; i < n; ++i)
 				if (buf[i] != '\r')
 					partial += buf[i];
-			size_t pos;
+			size_t pos{};
 			while ((pos = partial.find('\n')) != std::string::npos) {
 				if (alive->load())
 					AddLogThreadSafe(partial.substr(0, pos) + "\n");
@@ -1156,7 +1158,7 @@ void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs & /*a*/) {
 		return;
 	}
 
-	char slave_name[256];
+	char slave_name[256]{};
 	if (ptsname_r(master_fd, slave_name, sizeof(slave_name)) != 0) {
 		close(master_fd);
 		AddLog("[error] ptsname_r: %s\n", strerror(errno));
@@ -1214,7 +1216,7 @@ void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs & /*a*/) {
 
 	std::shared_ptr<std::atomic<bool>> alive = Alive_;
 	std::thread worker([this, session, alive, pid]() {
-		char buf[512];
+		char buf[512]{};
 		std::string partial;
 
 		while (true) {
@@ -1247,7 +1249,7 @@ void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs & /*a*/) {
 					partial += buf[i];
 
 			// Flush complete lines.
-			size_t pos;
+			size_t pos{};
 			while ((pos = partial.find('\n')) != std::string::npos) {
 				if (alive->load())
 					AddLogThreadSafe(StripAnsi(partial.substr(0, pos)) + "\n");

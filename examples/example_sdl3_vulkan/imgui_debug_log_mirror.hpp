@@ -20,6 +20,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"  // g.DebugLogBuf, g.DebugLogIndex, g.DebugLogFlags
 
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <tuple>      // std::ignore
@@ -46,8 +47,8 @@ public:
             return false;
         // _IOLBF: flush on every '\n' in addition to our explicit fflush().
         std::setvbuf(m_file, nullptr, _IOLBF, 0);
-        std::strncpy(m_path, path, sizeof(m_path) - 1);
-        m_path[sizeof(m_path) - 1] = '\0';
+        std::strncpy(m_path.data(), path, m_path.size() - 1);
+        m_path.at(m_path.size() - 1) = '\0';
         m_last_buf_size = 0;
         return true;
     }
@@ -60,12 +61,12 @@ public:
             std::fclose(m_file);
             m_file = nullptr;
         }
-        m_path[0]       = '\0';
+        m_path.at(0)       = '\0';
         m_last_buf_size = 0;
     }
 
     bool IsOpen() const { return m_file != nullptr; }
-    const char* GetPath() const { return m_path; }
+    const char* GetPath() const { return m_path.data(); }
 
     // Call once per frame, right after ImGui::NewFrame().
     // Writes any bytes added to g.DebugLogBuf since the last call.
@@ -114,20 +115,20 @@ public:
         // File path info row
         if (m_file)
         {
-            ImGui::TextDisabled("File: %s", m_path);
+            ImGui::TextDisabled("File: %s", m_path.data());
             ImGui::SameLine();
             if (ImGui::SmallButton("Open dir"))
             {
                 // best-effort: strip filename from path
-                char dir[512]{};
-                std::strncpy(dir, m_path, sizeof(dir) - 1);
-                char* last_sep = std::strrchr(dir, '/');
-                if (!last_sep) last_sep = std::strrchr(dir, '\\');
+                std::array<char, 512> dir{};
+                std::strncpy(dir.data(), m_path.data(), dir.size() - 1);
+                char* last_sep = std::strrchr(dir.data(), '/');
+                if (!last_sep) last_sep = std::strrchr(dir.data(), '\\');
                 if (last_sep) *last_sep = '\0';
                 // Not cross-platform, but harmless on non-Linux
-                char cmd[600]{};
-                std::snprintf(cmd, sizeof(cmd), "xdg-open \"%s\" &", dir);
-                std::ignore = std::system(cmd);
+                std::array<char, 600> cmd{};
+                std::snprintf(cmd.data(), cmd.size(), "xdg-open \"%s\" &", dir.data());
+                std::ignore = std::system(cmd.data());
             }
         }
         else
@@ -206,5 +207,5 @@ public:
 private:
     FILE* m_file          = nullptr;
     int   m_last_buf_size = 0;
-    char  m_path[512]     = {};
+    std::array<char, 512> m_path{};
 };

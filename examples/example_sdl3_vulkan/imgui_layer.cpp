@@ -1,6 +1,8 @@
 #include "imgui_layer.hpp"
 #include "../../misc/freetype/imgui_freetype.h"
 
+#include <array>
+
 ImGuiLayer::ImGuiLayer()
     : ShowDemoWindow{true}
     , ShowAnotherWindow{false}
@@ -102,15 +104,15 @@ void ImGuiLayer::DrawTerminals()
     {
         for (int i = 0; i < static_cast<int>(Terminals.size()); )
         {
-            TerminalTab& t = Terminals[i];
+            TerminalTab& t = Terminals.at(i);
             bool open = t.open;
-            char label[64]{};
-            std::snprintf(label, sizeof(label), "%s##tab%d", t.name.c_str(), i);
-            if (ImGui::BeginTabItem(label, &open))
+            std::array<char, 64> label{};
+            std::snprintf(label.data(), label.size(), "%s##tab%d", t.name.c_str(), i);
+            if (ImGui::BeginTabItem(label.data(), &open))
             {
-                char id[16]{};
-                std::snprintf(id, sizeof(id), "%d", i);
-                t.console->DrawContents(id);
+                std::array<char, 16> id{};
+                std::snprintf(id.data(), id.size(), "%d", i);
+                t.console->DrawContents(id.data());
                 ImGui::EndTabItem();
             }
             t.open = open;

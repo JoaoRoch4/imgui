@@ -31,7 +31,7 @@ struct BashSession {
 	std::atomic<bool> needs_input{false}; // password prompt has been detected
 	std::atomic<bool> terminal_mode{
 		false};               // interactive TTY: forward all input
-	char password_buf[256]{}; // filled by the main thread on Enter
+	std::array<char, 256> password_buf{}; // filled by the main thread on Enter
 	std::mutex fd_mutex;      // serialises write (main) vs close (worker)
 };
 
@@ -56,14 +56,14 @@ ImGuiConsole::~ImGuiConsole() {
 	*Alive_ = false;
 	ClearLog();
 	for (int i = 0; i < static_cast<int>(History.size()); i++)
-		std::free(History[i]);
+		std::free(History.at(i));
 }
 
 // ─── ClearLog ────────────────────────────────────────────────────────────────
 
 void ImGuiConsole::ClearLog() {
 	for (int i = 0; i < static_cast<int>(Items.size()); i++)
-		std::free(Items[i]);
+		std::free(Items.at(i));
 	Items.clear();
 	SelectedItem_ = nullptr;
 }
@@ -71,13 +71,13 @@ void ImGuiConsole::ClearLog() {
 // ─── AddLog ──────────────────────────────────────────────────────────────────
 
 void ImGuiConsole::AddLog(const char *fmt, ...) {
-	char buf[4096]{};
+	std::array<char, 4096> buf{};
 	va_list args;
 	va_start(args, fmt);
-	std::vsnprintf(buf, IM_ARRAYSIZE(buf), fmt, args);
-	buf[IM_ARRAYSIZE(buf) - 1] = '\0';
+	std::vsnprintf(buf.data(), buf.size(), fmt, args);
+	buf.at(buf.size() - 1) = '\0';
 	va_end(args);
-	Items.push_back(Strdup(buf));
+	Items.push_back(Strdup(buf.data()));
 }
 
 // ─── RegisterCommand ─────────────────────────────────────────────────────────
@@ -102,8 +102,8 @@ void ImGuiConsole::ExecCommand(const char *command_line) {
 	// ─────────────────────────────
 	HistoryPos = -1;
 	for (int i = static_cast<int>(History.size()) - 1; i >= 0; i--)
-		if (Stricmp(History[i], command_line) == 0) {
-			std::free(History[i]);
+		if (Stricmp(History.at(i), command_line) == 0) {
+			std::free(History.at(i));
 			History.erase(History.begin() + i);
 			break;
 		}
@@ -129,7 +129,7 @@ void ImGuiConsole::ExecCommand(const char *command_line) {
 		return;
 
 	// Upper-case command name
-	for (char &c : tokens[0])
+	for (char &c : tokens.at(0))
 		c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
 
 	// raw_args: everything after the command token, leading whitespace stripped
@@ -142,13 +142,13 @@ void ImGuiConsole::ExecCommand(const char *command_line) {
 	std::vector<std::string> args_vec(tokens.begin() + 1, tokens.end());
 	std::span<const std::string> args_span(args_vec);
 
-	ConsoleCommandArgs cargs{std::string_view(tokens[0]), args_span,
+	ConsoleCommandArgs cargs{std::string_view(tokens.at(0)), args_span,
 							 std::string_view(raw_start)};
 
 	// ── Dispatch
 	// ──────────────────────────────────────────────────────────────
 	for (auto &cmd : Commands) {
-		if (cmd.name == tokens[0]) {
+		if (cmd.name == tokens.at(0)) {
 			cmd.fn(*this, cargs);
 			ScrollToBottom = true;
 			return;
@@ -156,7 +156,7 @@ void ImGuiConsole::ExecCommand(const char *command_line) {
 	}
 
 	AddLog("[error] Unknown command '%s'. Type HELP for a list.\n",
-		   tokens[0].c_str());
+		   tokens.at(0).c_str());
 	ScrollToBottom = true;
 }
 
@@ -310,10 +310,10 @@ void ImGuiConsole::DrawContents(const char *id) {
 		ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "[TTY]");
 		ImGui::SameLine();
 		ImGui::SetNextItemWidth(-1.0f);
-		if (ImGui::InputText("##tty_input", InputBuf, IM_ARRAYSIZE(InputBuf),
+		if (ImGui::InputText("##tty_input", InputBuf.data(), InputBuf.size(),
 							 ImGuiInputTextFlags_EnterReturnsTrue |
 								 ImGuiInputTextFlags_EscapeClearsAll)) {
-			std::string line(InputBuf);
+			std::string line(InputBuf.data());
 			line += '\n';
 			{
 				std::lock_guard<std::mutex> lk(active_session->fd_mutex);
@@ -321,7 +321,7 @@ void ImGuiConsole::DrawContents(const char *id) {
 				if (fd >= 0)
 					write(fd, line.c_str(), line.size());
 			}
-			InputBuf[0] = '\0';
+			InputBuf.at(0) = '\0';
 			reclaim_focus = true;
 		}
 		ImGui::SetItemDefaultFocus();
@@ -333,13 +333,13 @@ void ImGuiConsole::DrawContents(const char *id) {
 		ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "(password)");
 		ImGui::SameLine();
 		ImGui::SetNextItemWidth(-1.0f);
-		if (ImGui::InputText("##pw_input", active_session->password_buf,
-							 sizeof(active_session->password_buf),
+		if (ImGui::InputText("##pw_input", active_session->password_buf.data(),
+							 active_session->password_buf.size(),
 							 ImGuiInputTextFlags_EnterReturnsTrue |
 								 ImGuiInputTextFlags_Password |
 								 ImGuiInputTextFlags_EscapeClearsAll)) {
 			// Send password + newline to child process via PTY
-			std::string pw(active_session->password_buf);
+			std::string pw(active_session->password_buf.data());
 			pw += '\n';
 			{
 				std::lock_guard<std::mutex> lk(active_session->fd_mutex);
@@ -347,8 +347,7 @@ void ImGuiConsole::DrawContents(const char *id) {
 				if (fd >= 0)
 					write(fd, pw.c_str(), pw.size());
 			}
-			memset(active_session->password_buf, 0,
-				   sizeof(active_session->password_buf));
+			active_session->password_buf.fill(0);
 			active_session->needs_input.store(false);
 			reclaim_focus = true;
 		}
@@ -363,12 +362,12 @@ void ImGuiConsole::DrawContents(const char *id) {
 									ImGuiInputTextFlags_CallbackCompletion |
 									ImGuiInputTextFlags_CallbackHistory;
 		ImGui::SetNextItemWidth(-1.0f);
-		if (ImGui::InputText("##input", InputBuf, IM_ARRAYSIZE(InputBuf), flags,
+		if (ImGui::InputText("##input", InputBuf.data(), InputBuf.size(), flags,
 							 &TextEditCallbackStub, this)) {
-			Strtrim(InputBuf);
-			if (InputBuf[0])
-				ExecCommand(InputBuf);
-			InputBuf[0] = '\0';
+			Strtrim(InputBuf.data());
+			if (InputBuf.at(0))
+				ExecCommand(InputBuf.data());
+			InputBuf.at(0) = '\0';
 			reclaim_focus = true;
 		}
 		ImGui::SetItemDefaultFocus();
@@ -385,9 +384,9 @@ void ImGuiConsole::Draw(const char *title, bool *p_open) {
 		ImGui::End();
 		return;
 	}
-	char uid[24]{};
-	std::snprintf(uid, sizeof(uid), "%p", static_cast<void *>(this));
-	DrawContents(uid);
+	std::array<char, 24> uid{};
+	std::snprintf(uid.data(), uid.size(), "%p", static_cast<void *>(this));
+	DrawContents(uid.data());
 	ImGui::End();
 }
 
@@ -413,7 +412,7 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 		// Collect matching commands
 		std::vector<int> candidates; // indices into Commands
 		for (int ci = 0; ci < static_cast<int>(Commands.size()); ++ci)
-			if (Strnicmp(Commands[ci].name.c_str(), word_start,
+				if (Strnicmp(Commands.at(ci).name.c_str(), word_start,
 						 static_cast<int>(word_end - word_start)) == 0)
 				candidates.push_back(ci);
 
@@ -423,11 +422,11 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 		} else if (candidates.size() == 1) {
 			data->DeleteChars(static_cast<int>(word_start - data->Buf),
 							  static_cast<int>(word_end - word_start));
-			data->InsertChars(data->CursorPos, Commands[candidates[0]].name.c_str());
+			data->InsertChars(data->CursorPos, Commands.at(candidates.at(0)).name.c_str());
 			data->InsertChars(data->CursorPos, " ");
 			AddLog("\x01%s\t%s\n",
-				   Commands[candidates[0]].name.c_str(),
-				   Commands[candidates[0]].description.c_str());
+				   Commands.at(candidates.at(0)).name.c_str(),
+				   Commands.at(candidates.at(0)).description.c_str());
 		} else {
 			// Expand to longest common prefix then list candidates
 			int match_len = static_cast<int>(word_end - word_start);
@@ -449,14 +448,14 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 			if (match_len > static_cast<int>(word_end - word_start)) {
 				data->DeleteChars(static_cast<int>(word_start - data->Buf),
 								  static_cast<int>(word_end - word_start));
-				const char *first = Commands[candidates[0]].name.c_str();
+				const char *first = Commands.at(candidates.at(0)).name.c_str();
 				data->InsertChars(data->CursorPos, first, first + match_len);
 			}
 			AddLog("Possible completions:\n");
 			for (int i = 0; i < static_cast<int>(candidates.size()); ++i)
 				AddLog("\x01%s\t%s\n",
-					   Commands[candidates[i]].name.c_str(),
-					   Commands[candidates[i]].description.c_str());
+					   Commands.at(candidates.at(i)).name.c_str(),
+					   Commands.at(candidates.at(i)).description.c_str());
 		}
 	} else if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
 		const int prev = HistoryPos;
@@ -471,7 +470,7 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 					HistoryPos = -1;
 		}
 		if (prev != HistoryPos) {
-			const char *entry = HistoryPos >= 0 ? History[HistoryPos] : "";
+			const char *entry = HistoryPos >= 0 ? History.at(HistoryPos) : "";
 			data->DeleteChars(0, data->BufTextLen);
 			data->InsertChars(0, entry);
 		}
@@ -574,7 +573,7 @@ void ConsoleCommands::CmdHelp(const ConsoleCommandArgs & /*a*/) {
 void ConsoleCommands::CmdHistory(const ConsoleCommandArgs & /*a*/) {
 	int first = static_cast<int>(History.size()) - 10;
 	for (int i = (first < 0 ? 0 : first); i < static_cast<int>(History.size()); ++i)
-		AddLog("%3d: %s\n", i, History[i]);
+		AddLog("%3d: %s\n", i, History.at(i));
 }
 
 // ── CLEAR ────────────────────────────────────────────────────────────────────
@@ -765,8 +764,8 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
 		return;
 	}
 
-	char slave_name[256];
-	if (ptsname_r(master_fd, slave_name, sizeof(slave_name)) != 0) {
+	std::array<char, 256> slave_name{};
+	if (ptsname_r(master_fd, slave_name.data(), slave_name.size()) != 0) {
 		close(master_fd);
 		AddLog("[error] ptsname_r: %s\n", strerror(errno));
 		return;
@@ -803,7 +802,7 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
 		// ── Child: set PTY slave as controlling terminal, then exec
 		// ───────────
 		setsid();
-		int slave_fd = open(slave_name, O_RDWR);
+		int slave_fd = open(slave_name.data(), O_RDWR);
 		if (slave_fd < 0)
 			_exit(127);
 		ioctl(slave_fd, TIOCSCTTY, 0);
@@ -820,7 +819,7 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
 	// ── Worker thread: read PTY output and detect password prompts
 	// ────────────
 	std::thread worker([this, session, alive, pid]() {
-		char buf[512]{};
+		std::array<char, 512> buf{};
 		std::string partial; // accumulates bytes before the next newline
 
 		while (true) {
@@ -844,15 +843,15 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
 			if (pfd.revents & (POLLHUP | POLLERR))
 				break;
 
-			ssize_t n = read(fd, buf, sizeof(buf) - 1);
+			ssize_t n = read(fd, buf.data(), buf.size() - 1);
 			if (n <= 0)
 				break; // EIO = child closed the PTY slave
-			buf[n] = '\0';
+			buf.at(static_cast<std::size_t>(n)) = '\0';
 
 			// PTY ONLCR flag translates \n → \r\n; strip the \r.
 			for (ssize_t i = 0; i < n; ++i)
-				if (buf[i] != '\r')
-					partial += buf[i];
+				if (buf.at(static_cast<std::size_t>(i)) != '\r')
+					partial += buf.at(static_cast<std::size_t>(i));
 
 			// Flush every complete line to the log.
 			size_t pos{};
@@ -964,8 +963,8 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs &a) {
 		return;
 	}
 
-	char slave_name[256]{};
-	if (ptsname_r(master_fd, slave_name, sizeof(slave_name)) != 0) {
+	std::array<char, 256> slave_name{};
+	if (ptsname_r(master_fd, slave_name.data(), slave_name.size()) != 0) {
 		close(master_fd);
 		AddLog("[error] ptsname_r: %s\n", strerror(errno));
 		return;
@@ -996,7 +995,7 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs &a) {
 
 	if (pid == 0) {
 		setsid();
-		int slave_fd = open(slave_name, O_RDWR);
+		int slave_fd = open(slave_name.data(), O_RDWR);
 		if (slave_fd < 0)
 			_exit(127);
 		ioctl(slave_fd, TIOCSCTTY, 0);
@@ -1011,7 +1010,7 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs &a) {
 	}
 
 	std::thread worker([this, session, alive, pid]() {
-		char buf[512];
+		std::array<char, 512> buf{};
 		std::string partial;
 
 		while (true) {
@@ -1031,13 +1030,13 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs &a) {
 				continue;
 			if (pfd.revents & (POLLHUP | POLLERR))
 				break;
-			ssize_t n = read(fd, buf, sizeof(buf) - 1);
+			ssize_t n = read(fd, buf.data(), buf.size() - 1);
 			if (n <= 0)
 				break;
-			buf[n] = '\0';
+			buf.at(static_cast<std::size_t>(n)) = '\0';
 			for (ssize_t i = 0; i < n; ++i)
-				if (buf[i] != '\r')
-					partial += buf[i];
+				if (buf.at(static_cast<std::size_t>(i)) != '\r')
+					partial += buf.at(static_cast<std::size_t>(i));
 			size_t pos{};
 			while ((pos = partial.find('\n')) != std::string::npos) {
 				if (alive->load())
@@ -1158,8 +1157,8 @@ void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs & /*a*/) {
 		return;
 	}
 
-	char slave_name[256]{};
-	if (ptsname_r(master_fd, slave_name, sizeof(slave_name)) != 0) {
+	std::array<char, 256> slave_name{};
+	if (ptsname_r(master_fd, slave_name.data(), slave_name.size()) != 0) {
 		close(master_fd);
 		AddLog("[error] ptsname_r: %s\n", strerror(errno));
 		return;
@@ -1199,7 +1198,7 @@ void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs & /*a*/) {
 	if (pid == 0) {
 		// Child: become a session leader, attach PTY slave as controlling tty.
 		setsid();
-		int slave_fd = open(slave_name, O_RDWR);
+		int slave_fd = open(slave_name.data(), O_RDWR);
 		if (slave_fd < 0)
 			_exit(127);
 		ioctl(slave_fd, TIOCSCTTY, 0);
@@ -1216,7 +1215,7 @@ void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs & /*a*/) {
 
 	std::shared_ptr<std::atomic<bool>> alive = Alive_;
 	std::thread worker([this, session, alive, pid]() {
-		char buf[512]{};
+		std::array<char, 512> buf{};
 		std::string partial;
 
 		while (true) {
@@ -1238,15 +1237,15 @@ void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs & /*a*/) {
 			if (pfd.revents & (POLLHUP | POLLERR))
 				break;
 
-			ssize_t n = read(fd, buf, sizeof(buf) - 1);
+			ssize_t n = read(fd, buf.data(), buf.size() - 1);
 			if (n <= 0)
 				break;
-			buf[n] = '\0';
+			buf.at(static_cast<std::size_t>(n)) = '\0';
 
 			// Strip \r injected by PTY ONLCR translation.
 			for (ssize_t i = 0; i < n; ++i)
-				if (buf[i] != '\r')
-					partial += buf[i];
+				if (buf.at(static_cast<std::size_t>(i)) != '\r')
+					partial += buf.at(static_cast<std::size_t>(i));
 
 			// Flush complete lines.
 			size_t pos{};

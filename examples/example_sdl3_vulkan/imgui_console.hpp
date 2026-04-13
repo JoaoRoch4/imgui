@@ -1,6 +1,7 @@
 #pragma once
 
 #include "imgui.h"
+#include <array>
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -83,7 +84,7 @@ public:
     void ExecCommand(const char* command_line);
 
 protected:
-    char                           InputBuf[512];
+    std::array<char, 512>           InputBuf;
     std::vector<char*>                Items;
     std::vector<ConsoleCommandDef> Commands;
     std::vector<char*>                History;

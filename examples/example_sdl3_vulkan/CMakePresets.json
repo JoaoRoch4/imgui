@@ -1,0 +1,33 @@
+{
+    "version": 6,
+    "configurePresets": [
+        {
+            "name": "linux-debug",
+            "displayName": "Linux Debug (clang++)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/_cmake_build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE":             "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "CMAKE_C_COMPILER":             "/usr/bin/clang",
+                "CMAKE_CXX_COMPILER":           "/usr/bin/clang++"
+            }
+        },
+        {
+            "name": "linux-release",
+            "displayName": "Linux Release (clang++)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/_cmake_build_release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE":             "Release",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "CMAKE_C_COMPILER":             "/usr/bin/clang",
+                "CMAKE_CXX_COMPILER":           "/usr/bin/clang++"
+            }
+        }
+    ],
+    "buildPresets": [
+        { "name": "linux-debug",   "configurePreset": "linux-debug",   "displayName": "Build Debug" },
+        { "name": "linux-release", "configurePreset": "linux-release",  "displayName": "Build Release" }
+    ]
+}

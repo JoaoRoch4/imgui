@@ -1,0 +1,115 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+
+        // ── C++ ──────────────────────────────────────────────────────────────
+        {
+            "type": "lldb-dap",
+            "request": "launch",
+            "name": "C++: SDL3+Vulkan + Debug Log",
+            "program": "${workspaceFolder}/examples/example_sdl3_vulkan/example_sdl3_vulkan",
+            "args": [],
+            "cwd": "${workspaceFolder}/examples/example_sdl3_vulkan/",
+            "preLaunchTask": "build + tail debug log",
+            "debugAdapterExecutable": "/usr/bin/lldb-dap",
+            "debugAdapterEnv": { "PATH": "/usr/local/bin:/usr/bin:/bin" }
+        },
+        {
+            "type": "lldb-dap",
+            "request": "launch",
+            "name": "C++: SDL3+Vulkan",
+            "program": "${workspaceFolder}/examples/example_sdl3_vulkan/example_sdl3_vulkan",
+            "args": [],
+            "cwd": "${workspaceFolder}/examples/example_sdl3_vulkan/",
+            "preLaunchTask": "make: example_sdl3_vulkan",
+            "debugAdapterExecutable": "/usr/bin/lldb-dap",
+            "debugAdapterEnv": { "PATH": "/usr/local/bin:/usr/bin:/bin" }
+        },
+
+        // ── C++ (CMake build) ────────────────────────────────────────────────
+        {
+            "type": "lldb-dap",
+            "request": "launch",
+            "name": "C++ [cmake]: SDL3+Vulkan",
+            "program": "${workspaceFolder}/build/linux-debug/examples/example_sdl3_vulkan/example_sdl3_vulkan",
+            "args": [],
+            "cwd": "${workspaceFolder}/examples/example_sdl3_vulkan/",
+            "preLaunchTask": "cmake: build (debug)",
+            "debugAdapterExecutable": "/usr/bin/lldb-dap",
+            "debugAdapterEnv": { "PATH": "/usr/local/bin:/usr/bin:/bin" }
+        },
+        {
+            "type": "lldb-dap",
+            "request": "launch",
+            "name": "C++ [cmake]: SDL3+Vulkan + Debug Log",
+            "program": "${workspaceFolder}/build/linux-debug/examples/example_sdl3_vulkan/example_sdl3_vulkan",
+            "args": [],
+            "cwd": "${workspaceFolder}/examples/example_sdl3_vulkan/",
+            "preLaunchTask": "cmake: build + tail debug log",
+            "debugAdapterExecutable": "/usr/bin/lldb-dap",
+            "debugAdapterEnv": { "PATH": "/usr/local/bin:/usr/bin:/bin" }
+        },
+
+        // ── Python MCP agents ────────────────────────────────────────────────
+        {
+            "type": "debugpy",
+            "request": "launch",
+            "name": "Python: imgui-cpp-expert",
+            "program": "${workspaceFolder}/agents/imgui-cpp-expert/mcp_server.py",
+            "python": "/home/joao/miniconda3/envs/imgui-cpp/bin/python",
+            "cwd": "${workspaceFolder}/agents/imgui-cpp-expert",
+            "envFile": "${workspaceFolder}/agents/imgui-cpp-expert/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Node: cpp-reference",
+            "program": "${workspaceFolder}/agents/cpp-reference/mcp_server.js",
+            "cwd": "${workspaceFolder}/agents/cpp-reference",
+            "envFile": "${workspaceFolder}/agents/cpp-reference/.env",
+            "console": "integratedTerminal"
+        },
+
+        // ── Python+C++ hybrid (pythoncpp-debug extension) ────────────────────
+        {
+            "type": "pythoncpp",
+            "request": "launch",
+            "name": "Python+C++: imgui-cpp-expert",
+            "pythonLaunchName": "Python: imgui-cpp-expert",
+            "cppAttachName": "(gdb) Attach to MCP"
+        },
+        {
+            "type": "cppdbg",
+            "request": "attach",
+            "name": "(gdb) Attach to MCP",
+            "program": "/home/joao/miniconda3/envs/imgui-cpp/bin/python",
+            "processId": "",
+            "MIMode": "gdb",
+            "miDebuggerPath": "/usr/bin/gdb",
+            "setupCommands": [
+                { "description": "Enable pretty-printing", "text": "-enable-pretty-printing", "ignoreFailures": true }
+            ]
+        }
+    ],
+
+    "compounds": [
+        {
+            "name": "Native: C++ SDL3+Vulkan",
+            "configurations": [ "C++: SDL3+Vulkan" ],
+            "stopAll": true
+        },
+        {
+            "name": "CMake: C++ SDL3+Vulkan",
+            "configurations": [ "C++ [cmake]: SDL3+Vulkan" ],
+            "stopAll": true
+        },
+        {
+            "name": "Hybrid: C++ + Python + Node",
+            "configurations": [ "C++: SDL3+Vulkan", "Python+C++: imgui-cpp-expert", "Node: cpp-reference" ],
+            "stopAll": true
+        }
+    ]
+}
+

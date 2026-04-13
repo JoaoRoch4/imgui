@@ -7,7 +7,7 @@
 
 CompileFlags:
   # Use the example-local compile_commands.json for files under this workspace.
-  CompilationDatabase: examples/example_sdl3_sdlgpu3
+  CompilationDatabase: build/linux-debug
   # Add flags to the compile command
   Add:
     - -I/home/joao/vscode/imgui

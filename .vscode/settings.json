@@ -1,0 +1,25 @@
+{
+    // ── CMake Tools ─────────────────────────────────────────────────────────────
+    // Source root for CMake Tools; presets are resolved from CMakePresets.json here.
+    "cmake.sourceDirectory": "${workspaceFolder}",
+    "cmake.configurePreset": "linux-debug",
+    "cmake.buildPreset":     "linux-debug",
+    // Use all available cores; 0 = auto-detect.
+    "cmake.parallelJobs":    0,
+    // Show cmake configure output in Output panel.
+    "cmake.buildBeforeLaunch": "always",
+
+    // ── clangd (primary C++ intellisense) ───────────────────────────────────────
+    "clangd.arguments": [
+        "--compile-commands-dir=${workspaceFolder}/build/linux-debug",
+        "--background-index",
+        "--clang-tidy",
+        "--header-insertion=never",
+        "--completion-style=detailed",
+        "--function-arg-placeholders=false"
+    ],
+
+    // ── C/C++ IntelliSense (disabled – clangd is primary) ───────────────────────
+    "C_Cpp.intelliSenseEngine": "disabled",
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/linux-debug/compile_commands.json"
+}

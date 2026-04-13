@@ -406,7 +406,7 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 							  (int)(word_end - word_start));
 			data->InsertChars(data->CursorPos, Commands[candidates[0]].name.c_str());
 			data->InsertChars(data->CursorPos, " ");
-			AddLog("  %-16s  %s\n",
+			AddLog("  %s\t%s\n",
 				   Commands[candidates[0]].name.c_str(),
 				   Commands[candidates[0]].description.c_str());
 		} else {
@@ -435,7 +435,7 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 			}
 			AddLog("Possible completions:\n");
 			for (int i = 0; i < candidates.Size; ++i)
-				AddLog("  %-16s  %s\n",
+				AddLog("  %s\t%s\n",
 					   Commands[candidates[i]].name.c_str(),
 					   Commands[candidates[i]].description.c_str());
 		}
@@ -547,7 +547,7 @@ ConsoleCommands::ConsoleCommands() {
 void ConsoleCommands::CmdHelp(const ConsoleCommandArgs & /*a*/) {
 	AddLog("Available commands:\n");
 	for (const auto &cmd : Commands)
-		AddLog("  %-12s  %s\n", cmd.name.c_str(), cmd.description.c_str());
+		AddLog("  %s\t%s\n", cmd.name.c_str(), cmd.description.c_str());
 }
 
 // ── HISTORY ──────────────────────────────────────────────────────────────────

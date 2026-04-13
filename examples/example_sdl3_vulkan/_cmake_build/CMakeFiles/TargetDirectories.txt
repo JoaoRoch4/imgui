@@ -1,0 +1,3 @@
+/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build/CMakeFiles/example_sdl3_vulkan.dir
+/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build/CMakeFiles/edit_cache.dir
+/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build/CMakeFiles/rebuild_cache.dir

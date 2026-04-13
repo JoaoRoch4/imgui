@@ -92,11 +92,11 @@ void ImGuiLayer::DrawTerminals()
             TerminalTab& t = Terminals[i];
             bool open = t.open;
             char label[64];
-            snprintf(label, sizeof(label), "%s##tab%d", t.name.c_str(), i);
+            std::snprintf(label, sizeof(label), "%s##tab%d", t.name.c_str(), i);
             if (ImGui::BeginTabItem(label, &open))
             {
                 char id[16];
-                snprintf(id, sizeof(id), "%d", i);
+                std::snprintf(id, sizeof(id), "%d", i);
                 t.console->DrawContents(id);
                 ImGui::EndTabItem();
             }

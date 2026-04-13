@@ -6,7 +6,7 @@ bool SDLWindow::Init(const char* title, int width, int height)
 {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))
     {
-        printf("Error: SDL_Init(): %s\n", SDL_GetError());
+        std::printf("Error: SDL_Init(): %s\n", SDL_GetError());
         return false;
     }
 
@@ -22,7 +22,7 @@ bool SDLWindow::Init(const char* title, int width, int height)
                               window_flags);
     if (Window == nullptr)
     {
-        printf("Error: SDL_CreateWindow(): %s\n", SDL_GetError());
+        std::printf("Error: SDL_CreateWindow(): %s\n", SDL_GetError());
         return false;
     }
     return true;
@@ -51,7 +51,7 @@ VkSurfaceKHR SDLWindow::CreateVulkanSurface(VkInstance instance,
     VkSurfaceKHR surface = VK_NULL_HANDLE;
     if (SDL_Vulkan_CreateSurface(Window, instance, allocator, &surface) == 0)
     {
-        printf("Failed to create Vulkan surface.\n");
+        std::printf("Failed to create Vulkan surface.\n");
         return VK_NULL_HANDLE;
     }
     return surface;

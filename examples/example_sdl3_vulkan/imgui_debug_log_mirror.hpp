@@ -41,12 +41,12 @@ public:
     bool Open(const char* path)
     {
         Close();
-        m_file = fopen(path, "w");
+        m_file = std::fopen(path, "w");
         if (!m_file)
             return false;
         // _IOLBF: flush on every '\n' in addition to our explicit fflush().
-        setvbuf(m_file, nullptr, _IOLBF, 0);
-        strncpy(m_path, path, sizeof(m_path) - 1);
+        std::setvbuf(m_file, nullptr, _IOLBF, 0);
+        std::strncpy(m_path, path, sizeof(m_path) - 1);
         m_path[sizeof(m_path) - 1] = '\0';
         m_last_buf_size = 0;
         return true;
@@ -57,7 +57,7 @@ public:
     {
         if (m_file)
         {
-            fclose(m_file);
+            std::fclose(m_file);
             m_file = nullptr;
         }
         m_path[0]       = '\0';
@@ -79,8 +79,8 @@ public:
             return;
         const char* begin = g.DebugLogBuf.begin() + m_last_buf_size;
         const int   len   = cur - m_last_buf_size;
-        fwrite(begin, 1, static_cast<size_t>(len), m_file);
-        fflush(m_file);
+        std::fwrite(begin, 1, static_cast<size_t>(len), m_file);
+        std::fflush(m_file);
         m_last_buf_size = cur;
     }
 
@@ -120,14 +120,14 @@ public:
             {
                 // best-effort: strip filename from path
                 char dir[512];
-                strncpy(dir, m_path, sizeof(dir) - 1);
-                char* last_sep = strrchr(dir, '/');
-                if (!last_sep) last_sep = strrchr(dir, '\\');
+                std::strncpy(dir, m_path, sizeof(dir) - 1);
+                char* last_sep = std::strrchr(dir, '/');
+                if (!last_sep) last_sep = std::strrchr(dir, '\\');
                 if (last_sep) *last_sep = '\0';
                 // Not cross-platform, but harmless on non-Linux
                 char cmd[600];
-                snprintf(cmd, sizeof(cmd), "xdg-open \"%s\" &", dir);
-                std::ignore = system(cmd);
+                std::snprintf(cmd, sizeof(cmd), "xdg-open \"%s\" &", dir);
+                std::ignore = std::system(cmd);
             }
         }
         else
@@ -169,7 +169,7 @@ public:
             m_last_buf_size = 0;
             if (m_file)
             {
-                fseek(m_file, 0, SEEK_SET);
+                std::fseek(m_file, 0, SEEK_SET);
                 std::ignore = ftruncate(fileno(m_file), 0);
             }
         }

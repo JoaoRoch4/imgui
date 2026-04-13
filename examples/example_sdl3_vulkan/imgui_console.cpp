@@ -41,7 +41,7 @@ struct BashSession {
 
 ImGuiConsole::ImGuiConsole() {
 	*InputBuf = static_cast<char>('\0');
-	memset(InputBuf, 0, sizeof(InputBuf));
+	std::memset(InputBuf, 0, sizeof(InputBuf));
 	HistoryPos = -1;
 	AutoScroll = true;
 	ScrollToBottom = false;
@@ -54,14 +54,14 @@ ImGuiConsole::~ImGuiConsole() {
 	*Alive_ = false;
 	ClearLog();
 	for (int i = 0; i < History.Size; i++)
-		free(History[i]);
+		std::free(History[i]);
 }
 
 // ─── ClearLog ────────────────────────────────────────────────────────────────
 
 void ImGuiConsole::ClearLog() {
 	for (int i = 0; i < Items.Size; i++)
-		free(Items[i]);
+		std::free(Items[i]);
 	Items.clear();
 	SelectedItem_ = nullptr;
 }
@@ -72,7 +72,7 @@ void ImGuiConsole::AddLog(const char *fmt, ...) {
 	char buf[4096];
 	va_list args;
 	va_start(args, fmt);
-	vsnprintf(buf, IM_ARRAYSIZE(buf), fmt, args);
+	std::vsnprintf(buf, IM_ARRAYSIZE(buf), fmt, args);
 	buf[IM_ARRAYSIZE(buf) - 1] = '\0';
 	va_end(args);
 	Items.push_back(Strdup(buf));
@@ -101,7 +101,7 @@ void ImGuiConsole::ExecCommand(const char *command_line) {
 	HistoryPos = -1;
 	for (int i = History.Size - 1; i >= 0; i--)
 		if (Stricmp(History[i], command_line) == 0) {
-			free(History[i]);
+			std::free(History[i]);
 			History.erase(History.begin() + i);
 			break;
 		}
@@ -228,16 +228,16 @@ void ImGuiConsole::DrawContents(const char *id) {
 
 			ImVec4 color = {};
 			bool has_color = false;
-			if (strstr(item, "[error]")) {
+			if (std::strstr(item, "[error]")) {
 				color = {1.0f, 0.4f, 0.4f, 1.0f};
 				has_color = true;
-			} else if (strstr(item, "[warn]")) {
+			} else if (std::strstr(item, "[warn]")) {
 				color = {1.0f, 1.0f, 0.4f, 1.0f};
 				has_color = true;
-			} else if (strncmp(item, "# ", 2) == 0) {
+			} else if (std::strncmp(item, "# ", 2) == 0) {
 				color = {1.0f, 0.8f, 0.6f, 1.0f};
 				has_color = true;
-			} else if (strncmp(item, "$ ", 2) == 0) {
+			} else if (std::strncmp(item, "$ ", 2) == 0) {
 				color = {0.4f, 1.0f, 0.4f, 1.0f};
 				has_color = true;
 			}
@@ -246,7 +246,7 @@ void ImGuiConsole::DrawContents(const char *id) {
 			ImGui::PushID(display_idx++);
 			if (item[0] == '\x01') {
 				// Two-column command listing: \x01NAME\tDESCRIPTION
-				const char *tab = strchr(item + 1, '\t');
+				const char *tab = std::strchr(item + 1, '\t');
 				if (tab) {
 					ImGui::TextColored({1.0f, 1.0f, 0.0f, 1.0f}, "%.*s",
 									   static_cast<int>(tab - (item + 1)), item + 1);
@@ -384,7 +384,7 @@ void ImGuiConsole::Draw(const char *title, bool *p_open) {
 		return;
 	}
 	char uid[24];
-	snprintf(uid, sizeof(uid), "%p", static_cast<void *>(this));
+	std::snprintf(uid, sizeof(uid), "%p", static_cast<void *>(this));
 	DrawContents(uid);
 	ImGui::End();
 }
@@ -500,14 +500,14 @@ int ImGuiConsole::Strnicmp(const char *s1, const char *s2, int n) {
 
 char *ImGuiConsole::Strdup(const char *s) {
 	IM_ASSERT(s);
-	size_t len = strlen(s) + 1;
-	void *buf = malloc(len);
+	size_t len = std::strlen(s) + 1;
+	void *buf = std::malloc(len);
 	IM_ASSERT(buf);
-	return static_cast<char *>(memcpy(buf, s, len));
+	return static_cast<char *>(std::memcpy(buf, s, len));
 }
 
 void ImGuiConsole::Strtrim(char *s) {
-	char *end = s + strlen(s);
+	char *end = s + std::strlen(s);
 	while (end > s && end[-1] == ' ')
 		--end;
 	*end = '\0';

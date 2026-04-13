@@ -1,0 +1,134 @@
+[
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/main.cpp.o -c /home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/main.cpp",
+  "file": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/main.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/main.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/vulkan_context.cpp.o -c /home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/vulkan_context.cpp",
+  "file": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/vulkan_context.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/vulkan_context.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/sdl_window.cpp.o -c /home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/sdl_window.cpp",
+  "file": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/sdl_window.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/sdl_window.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/imgui_layer.cpp.o -c /home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/imgui_layer.cpp",
+  "file": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/imgui_layer.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/imgui_layer.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/imgui_console.cpp.o -c /home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/imgui_console.cpp",
+  "file": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/imgui_console.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/imgui_console.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/imgui.cpp.o -c /home/joao/vscode/imgui-1/imgui.cpp",
+  "file": "/home/joao/vscode/imgui-1/imgui.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/imgui.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/imgui_demo.cpp.o -c /home/joao/vscode/imgui-1/imgui_demo.cpp",
+  "file": "/home/joao/vscode/imgui-1/imgui_demo.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/imgui_demo.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/imgui_draw.cpp.o -c /home/joao/vscode/imgui-1/imgui_draw.cpp",
+  "file": "/home/joao/vscode/imgui-1/imgui_draw.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/imgui_draw.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/imgui_tables.cpp.o -c /home/joao/vscode/imgui-1/imgui_tables.cpp",
+  "file": "/home/joao/vscode/imgui-1/imgui_tables.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/imgui_tables.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/imgui_widgets.cpp.o -c /home/joao/vscode/imgui-1/imgui_widgets.cpp",
+  "file": "/home/joao/vscode/imgui-1/imgui_widgets.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/imgui_widgets.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/backends/imgui_impl_sdl3.cpp.o -c /home/joao/vscode/imgui-1/backends/imgui_impl_sdl3.cpp",
+  "file": "/home/joao/vscode/imgui-1/backends/imgui_impl_sdl3.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/backends/imgui_impl_sdl3.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/backends/imgui_impl_vulkan.cpp.o -c /home/joao/vscode/imgui-1/backends/imgui_impl_vulkan.cpp",
+  "file": "/home/joao/vscode/imgui-1/backends/imgui_impl_vulkan.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/backends/imgui_impl_vulkan.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/misc/freetype/imgui_freetype.cpp.o -c /home/joao/vscode/imgui-1/misc/freetype/imgui_freetype.cpp",
+  "file": "/home/joao/vscode/imgui-1/misc/freetype/imgui_freetype.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/misc/freetype/imgui_freetype.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/test_engine_layer.cpp.o -c /home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/test_engine_layer.cpp",
+  "file": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/test_engine_layer.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/test_engine_layer.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_engine.cpp.o -c /home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_engine.cpp",
+  "file": "/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_engine.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_engine.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_context.cpp.o -c /home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_context.cpp",
+  "file": "/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_context.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_context.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_coroutine.cpp.o -c /home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_coroutine.cpp",
+  "file": "/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_coroutine.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_coroutine.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_exporters.cpp.o -c /home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_exporters.cpp",
+  "file": "/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_exporters.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_exporters.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_perftool.cpp.o -c /home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_perftool.cpp",
+  "file": "/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_perftool.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_perftool.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_ui.cpp.o -c /home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_ui.cpp",
+  "file": "/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_ui.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_ui.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_utils.cpp.o -c /home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_utils.cpp",
+  "file": "/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_utils.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_utils.cpp.o"
+},
+{
+  "directory": "/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan/_cmake_build",
+  "command": "/usr/bin/clang++ -DIMGUI_TEST_ENGINE_ENABLE=1 -I/home/joao/vscode/imgui_test_engine/imgui_test_engine -I/home/joao/vscode/imgui-1/examples/example_sdl3_vulkan -I/home/joao/vscode/imgui-1 -I/home/joao/vscode/imgui-1/backends -I/home/joao/vscode/imgui-1/misc/freetype -isystem /home/joao/.local/include -isystem /usr/include/freetype2 -isystem /usr/include/libpng16 -isystem /usr/include/harfbuzz -isystem /usr/include/glib-2.0 -isystem /usr/lib64/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutosvg -isystem /home/joao/.local/lib64/pkgconfig/../../include/plutovg -g -std=gnu++23 -Wall -Wformat -g -DWITH_GZFILEOP -pthread -DPLUTOSVG_BUILD_STATIC -DPLUTOVG_BUILD_STATIC -o CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_capture_tool.cpp.o -c /home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_capture_tool.cpp",
+  "file": "/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_capture_tool.cpp",
+  "output": "CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_capture_tool.cpp.o"
+}
+]

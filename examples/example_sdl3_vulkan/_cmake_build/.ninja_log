@@ -1,0 +1,24 @@
+# ninja log v7
+2	476	1776045690034858698	CMakeFiles/example_sdl3_vulkan.dir/vulkan_context.cpp.o	d626789c64601942
+476	716	1776045690509065172	CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/backends/imgui_impl_sdl3.cpp.o	75077583c7981678
+716	1217	1776045690749172422	CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/backends/imgui_impl_vulkan.cpp.o	e33c3bd4903b96d3
+7	2742	1776045690039339304	CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/imgui_demo.cpp.o	1c4c41219431c360
+1217	2919	1776045691249772038	CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/misc/freetype/imgui_freetype.cpp.o	8b854b4c7c153992
+9	4211	1776045690041339294	CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/imgui_tables.cpp.o	b1f1331bb8b81af9
+2	4454	1776045690034339327	CMakeFiles/example_sdl3_vulkan.dir/main.cpp.o	85badc12fbd7d99f
+7	4688	1776045690040341698	CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/imgui_draw.cpp.o	f70acd06ea522c0d
+10	4847	1776045690042339290	CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/imgui_widgets.cpp.o	c9956296d37ef390
+2743	5117	1776045692775459961	CMakeFiles/example_sdl3_vulkan.dir/test_engine_layer.cpp.o	c7316366954723d1
+3	5629	1776045690035339322	CMakeFiles/example_sdl3_vulkan.dir/imgui_layer.cpp.o	6c9a090f7ac52dbd
+2	6121	1776045690035121858	CMakeFiles/example_sdl3_vulkan.dir/sdl_window.cpp.o	ce2445d2f93a4221
+4	6199	1776045690036339317	CMakeFiles/example_sdl3_vulkan.dir/imgui_console.cpp.o	501d1cc9fc0dac4f
+2919	6591	1776045692951325850	CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_engine.cpp.o	8804b610d7f40591
+4688	7043	1776045694720893904	CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_exporters.cpp.o	5f11d9a8613e4f07
+6	7077	1776045690038339308	CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui-1/imgui.cpp.o	5197bed3b27b04c6
+5118	7420	1776045695150315690	CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_ui.cpp.o	4d938c1953358294
+4211	7459	1776045694244176383	CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_context.cpp.o	3b978cbcaf4d0862
+4847	7662	1776045694879316942	CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_perftool.cpp.o	25d006edff66004c
+6121	7901	1776045696153311056	CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_capture_tool.cpp.o	1209373028df7723
+4456	8010	1776045694488764271	CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_coroutine.cpp.o	603ad9664e0faa2c
+5629	9309	1776045695661313329	CMakeFiles/example_sdl3_vulkan.dir/home/joao/vscode/imgui_test_engine/imgui_test_engine/imgui_te_utils.cpp.o	fc0564a29cd656ce
+9310	9631	1776045699342296322	example_sdl3_vulkan	9f028f6f1ed85989

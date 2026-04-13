@@ -15,7 +15,7 @@ void VulkanContext::CheckVkResult(VkResult err)
 {
     if (err == VK_SUCCESS)
         return;
-    fprintf(stderr, "[vulkan] Error: VkResult = %d\n", err);
+    std::fprintf(stderr, "[vulkan] Error: VkResult = %d\n", err);
     if (err < 0)
         abort();
 }
@@ -26,7 +26,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL VulkanContext::DebugReportCallback(
     uint64_t /*object*/, size_t /*location*/, int32_t /*messageCode*/,
     const char* /*pLayerPrefix*/, const char* pMessage, void* /*pUserData*/)
 {
-    fprintf(stderr, "[vulkan] Debug report from ObjectType: %i\nMessage: %s\n\n",
+    std::fprintf(stderr, "[vulkan] Debug report from ObjectType: %i\nMessage: %s\n\n",
             objectType, pMessage);
     return VK_FALSE;
 }
@@ -36,7 +36,7 @@ bool VulkanContext::IsExtensionAvailable(const ImVector<VkExtensionProperties>& 
                                          const char* extension)
 {
     for (const VkExtensionProperties& p : properties)
-        if (strcmp(p.extensionName, extension) == 0)
+        if (std::strcmp(p.extensionName, extension) == 0)
             return true;
     return false;
 }
@@ -163,7 +163,7 @@ void VulkanContext::SetupWindow(VkSurfaceKHR surface, int width, int height)
     vkGetPhysicalDeviceSurfaceSupportKHR(PhysicalDevice, QueueFamily, surface, &res);
     if (res != VK_TRUE)
     {
-        fprintf(stderr, "Error no WSI support on physical device 0\n");
+        std::fprintf(stderr, "Error no WSI support on physical device 0\n");
         exit(-1);
     }
 

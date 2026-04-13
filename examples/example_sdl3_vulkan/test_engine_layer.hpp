@@ -16,7 +16,6 @@ class TestEngineLayer {
 	TestEngineLayer();
 
 	ImGuiTestEngine* Engine;
-	bool ShowWindow;
 
 	// Create the engine, bind it to the current ImGui context, register tests.
 	void Init();
@@ -30,8 +29,8 @@ class TestEngineLayer {
 	// Must be called once per frame after the framebuffer swap.
 	void PostSwap();
 
-	// Show the test-runner window.
-	void BuildUI();
+	// Show the test-runner window.  p_open controls visibility (same as ImGui::Begin p_open).
+	void BuildUI(bool* p_open);
 
     private:
 	void RegisterTests();

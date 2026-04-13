@@ -54,7 +54,7 @@ int main(int, char**)
 
 		imgui.NewFrame();
 		imgui.BuildUI();
-		test_engine.BuildUI();
+		test_engine.BuildUI(&imgui.ShowTestEngineWindow);
 		imgui.Render();
 
 		ImDrawData* draw_data = ImGui::GetDrawData();

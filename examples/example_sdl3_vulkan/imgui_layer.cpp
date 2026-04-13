@@ -9,6 +9,7 @@ ImGuiLayer::ImGuiLayer()
     , ShowAnotherWindow{false}
     , ShowDebugLogMirrorWindow{true}
     , ShowTerminalWindow{true}
+    , ShowTestEngineWindow{true}
     , RequestQuit{false}
     , ClearColor{0.45f, 0.55f, 0.60f, 1.00f}
 {}
@@ -166,6 +167,7 @@ void ImGuiLayer::BuildUI()
         ImGui::Checkbox("Another Window", &ShowAnotherWindow);
         ImGui::Checkbox("Debug Log",      &ShowDebugLogMirrorWindow);
         ImGui::Checkbox("Terminals",        &ShowTerminalWindow);
+        ImGui::Checkbox("Test Engine",    &ShowTestEngineWindow);
         ImGui::SliderFloat("float", &f, 0.0f, 1.0f);
         ImGui::ColorEdit3("clear color", &ClearColor.x);
         if (ImGui::Button("Button"))

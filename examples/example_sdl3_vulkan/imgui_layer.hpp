@@ -21,6 +21,7 @@ public:
     bool   ShowAnotherWindow;
     bool   ShowDebugLogMirrorWindow;
     bool   ShowTerminalWindow;
+    bool   ShowTestEngineWindow;
     bool   RequestQuit;
     ImVec4 ClearColor;
 

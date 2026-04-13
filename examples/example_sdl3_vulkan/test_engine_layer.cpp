@@ -5,7 +5,6 @@
 
 TestEngineLayer::TestEngineLayer()
     : Engine { nullptr }
-    , ShowWindow { true }
 {
 }
 
@@ -35,7 +34,12 @@ void TestEngineLayer::Shutdown()
 
 void TestEngineLayer::PostSwap() { ImGuiTestEngine_PostSwap(Engine); }
 
-void TestEngineLayer::BuildUI() { ImGuiTestEngine_ShowTestEngineWindows(Engine, &ShowWindow); }
+void TestEngineLayer::BuildUI(bool* p_open)
+{
+    if (p_open && !*p_open)
+        return;
+    ImGuiTestEngine_ShowTestEngineWindows(Engine, p_open);
+}
 
 void TestEngineLayer::RegisterTests()
 {

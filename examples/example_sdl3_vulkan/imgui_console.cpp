@@ -87,7 +87,7 @@ void ImGuiConsole::RegisterCommand(const char *name, const char *description,
 	def.fn = std::move(fn);
 	def.name = name;
 	for (char &c : def.name)
-		c = (char)toupper((unsigned char)c);
+		c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
 	Commands.push_back(std::move(def));
 }
 
@@ -128,7 +128,7 @@ void ImGuiConsole::ExecCommand(const char *command_line) {
 
 	// Upper-case command name
 	for (char &c : tokens[0])
-		c = (char)toupper((unsigned char)c);
+		c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
 
 	// raw_args: everything after the command token, leading whitespace stripped
 	const char *raw_start = command_line;
@@ -249,13 +249,13 @@ void ImGuiConsole::DrawContents(const char *id) {
 				const char *tab = strchr(item + 1, '\t');
 				if (tab) {
 					ImGui::TextColored({1.0f, 1.0f, 0.0f, 1.0f}, "%.*s",
-									   (int)(tab - (item + 1)), item + 1);
+									   static_cast<int>(tab - (item + 1)), item + 1);
 					ImGui::SameLine(120.0f);
 					const char *desc = tab + 1;
 					size_t dl = strlen(desc);
 					while (dl > 0 && (desc[dl-1] == '\n' || desc[dl-1] == '\r')) --dl;
 					ImGui::TextColored({0.4f, 1.0f, 0.4f, 1.0f}, "%.*s",
-									   (int)dl, desc);
+									   static_cast<int>(dl), desc);
 				} else {
 					ImGui::TextColored({1.0f, 1.0f, 0.0f, 1.0f}, "%s", item + 1);
 				}
@@ -410,17 +410,17 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 
 		// Collect matching commands
 		ImVector<int> candidates; // indices into Commands
-		for (int ci = 0; ci < (int)Commands.size(); ++ci)
+		for (int ci = 0; ci < static_cast<int>(Commands.size()); ++ci)
 			if (Strnicmp(Commands[ci].name.c_str(), word_start,
-						 (int)(word_end - word_start)) == 0)
+						 static_cast<int>(word_end - word_start)) == 0)
 				candidates.push_back(ci);
 
 		if (candidates.Size == 0) {
-			AddLog("No completion for \"%.*s\"\n", (int)(word_end - word_start),
+			AddLog("No completion for \"%.*s\"\n", static_cast<int>(word_end - word_start),
 				   word_start);
 		} else if (candidates.Size == 1) {
-			data->DeleteChars((int)(word_start - data->Buf),
-							  (int)(word_end - word_start));
+			data->DeleteChars(static_cast<int>(word_start - data->Buf),
+							  static_cast<int>(word_end - word_start));
 			data->InsertChars(data->CursorPos, Commands[candidates[0]].name.c_str());
 			data->InsertChars(data->CursorPos, " ");
 			AddLog("\x01%s\t%s\n",
@@ -428,25 +428,25 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 				   Commands[candidates[0]].description.c_str());
 		} else {
 			// Expand to longest common prefix then list candidates
-			int match_len = (int)(word_end - word_start);
+			int match_len = static_cast<int>(word_end - word_start);
 			for (;;) {
 				int c = 0;
 				bool all_match = true;
 				for (int i = 0; i < candidates.Size && all_match; ++i) {
 					if (i == 0)
-						c = toupper((unsigned char)Commands[candidates[i]].name[match_len]);
+						c = toupper(static_cast<unsigned char>(Commands[candidates[i]].name[match_len]));
 					else if (c == 0 ||
 							 c != toupper(
-									  (unsigned char)Commands[candidates[i]].name[match_len]))
+									  static_cast<unsigned char>(Commands[candidates[i]].name[match_len])))
 						all_match = false;
 				}
 				if (!all_match)
 					break;
 				++match_len;
 			}
-			if (match_len > (int)(word_end - word_start)) {
-				data->DeleteChars((int)(word_start - data->Buf),
-								  (int)(word_end - word_start));
+			if (match_len > static_cast<int>(word_end - word_start)) {
+				data->DeleteChars(static_cast<int>(word_start - data->Buf),
+								  static_cast<int>(word_end - word_start));
 				const char *first = Commands[candidates[0]].name.c_str();
 				data->InsertChars(data->CursorPos, first, first + match_len);
 			}
@@ -481,7 +481,7 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 
 int ImGuiConsole::Stricmp(const char *s1, const char *s2) {
 	int d;
-	while ((d = toupper((unsigned char)*s2) - toupper((unsigned char)*s1)) ==
+	while ((d = toupper(static_cast<unsigned char>(*s2)) - toupper(static_cast<unsigned char>(*s1))) ==
 			   0 &&
 		   *s1)
 		++s1, ++s2;
@@ -491,7 +491,7 @@ int ImGuiConsole::Stricmp(const char *s1, const char *s2) {
 int ImGuiConsole::Strnicmp(const char *s1, const char *s2, int n) {
 	int d = 0;
 	while (n > 0 &&
-		   (d = toupper((unsigned char)*s2) - toupper((unsigned char)*s1)) ==
+		   (d = toupper(static_cast<unsigned char>(*s2)) - toupper(static_cast<unsigned char>(*s1))) ==
 			   0 &&
 		   *s1)
 		--n, ++s1, ++s2;
@@ -585,7 +585,7 @@ void ConsoleCommands::CmdEcho(const ConsoleCommandArgs &a) {
 	if (a.raw_args.empty())
 		AddLog("\n");
 	else
-		AddLog("%.*s\n", (int)a.raw_args.size(), a.raw_args.data());
+		AddLog("%.*s\n", static_cast<int>(a.raw_args.size()), a.raw_args.data());
 }
 
 // ── FPS ──────────────────────────────────────────────────────────────────────
@@ -604,7 +604,7 @@ void ConsoleCommands::CmdStyle(const ConsoleCommandArgs &a) {
 	}
 	std::string which = a.args[0];
 	for (char &c : which)
-		c = (char)toupper((unsigned char)c);
+		c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
 
 	if (which == "DARK") {
 		ImGui::StyleColorsDark();
@@ -635,7 +635,7 @@ void ConsoleCommands::CmdDemo(const ConsoleCommandArgs &a) {
 	}
 	std::string which = a.args[0];
 	for (char &c : which)
-		c = (char)toupper((unsigned char)c);
+		c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
 
 	if (which == "ON") {
 		if (OnDemoToggle)
@@ -679,10 +679,10 @@ void ConsoleCommands::CmdLog(const ConsoleCommandArgs &a) {
 	while (std::getline(f, line))
 		lines.push_back(std::move(line));
 
-	int start = std::max(0, (int)lines.size() - n);
+	int start = std::max(0, static_cast<int>(lines.size()) - n);
 	AddLog("── /tmp/imgui_debug.log (last %d lines) ──\n",
-		   (int)lines.size() - start);
-	for (int i = start; i < (int)lines.size(); ++i)
+		   static_cast<int>(lines.size()) - start);
+	for (int i = start; i < static_cast<int>(lines.size()); ++i)
 		AddLog("%s\n", lines[i].c_str());
 }
 
@@ -866,7 +866,7 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
 			if (!partial.empty() && !session->needs_input.load()) {
 				std::string lower = partial;
 				for (char &c : lower)
-					c = (char)tolower((unsigned char)c);
+					c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
 				bool looks_like_prompt =
 					(lower.find("password") != std::string::npos ||
 					 lower.find("passphrase") != std::string::npos) &&

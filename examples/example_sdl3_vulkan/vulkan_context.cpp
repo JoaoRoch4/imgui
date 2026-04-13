@@ -5,9 +5,9 @@
 #endif
 
 #include "vulkan_context.hpp"
-#include <stdio.h>   // fprintf
-#include <stdlib.h>  // abort, exit
-#include <string.h>  // strcmp
+#include <cstdio>    // fprintf
+#include <cstdlib>   // abort, exit
+#include <cstring>   // strcmp
 
 // ── static helpers ────────────────────────────────────────────────────────────
 

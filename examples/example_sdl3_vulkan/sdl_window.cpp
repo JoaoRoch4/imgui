@@ -1,6 +1,6 @@
 #include "sdl_window.hpp"
 #include "imgui_layer.hpp"   // needed for ImGuiLayer::ProcessEvent in PollEvents
-#include <stdio.h>           // printf
+#include <cstdio>            // printf
 
 bool SDLWindow::Init(const char* title, int width, int height)
 {

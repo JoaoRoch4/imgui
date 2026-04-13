@@ -91,6 +91,7 @@ protected:
     ImGuiTextFilter                Filter;
     bool                           AutoScroll;
     bool                           ScrollToBottom;
+    const char*                    SelectedItem_ = nullptr; // points into Items; nullptr = no selection
 
     static int   TextEditCallbackStub(ImGuiInputTextCallbackData* data);
     int          TextEditCallback(ImGuiInputTextCallbackData* data);

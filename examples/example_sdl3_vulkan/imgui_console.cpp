@@ -63,6 +63,7 @@ void ImGuiConsole::ClearLog()
     for (int i = 0; i < Items.Size; i++)
         free(Items[i]);
     Items.clear();
+    SelectedItem_ = nullptr;
 }
 
 // ─── AddLog ──────────────────────────────────────────────────────────────────
@@ -217,6 +218,7 @@ void ImGuiConsole::DrawContents(const char* id)
         if (copy_to_clipboard)
             ImGui::LogToClipboard();
 
+        int display_idx = 0;
         for (const char* item : Items)
         {
             if (!Filter.PassFilter(item))
@@ -229,9 +231,18 @@ void ImGuiConsole::DrawContents(const char* id)
             else if (strncmp(item,  "# ", 2) == 0)   { color = { 1.0f, 0.8f, 0.6f, 1.0f }; has_color = true; }
             else if (strncmp(item,  "$ ", 2) == 0)   { color = { 0.4f, 1.0f, 0.4f, 1.0f }; has_color = true; }
 
+            bool is_selected = (item == SelectedItem_);
+            ImGui::PushID(display_idx++);
             if (has_color) ImGui::PushStyleColor(ImGuiCol_Text, color);
-            ImGui::TextUnformatted(item);
+            if (ImGui::Selectable(item, is_selected, ImGuiSelectableFlags_None))
+            {
+                SelectedItem_ = item;
+                ImGui::SetClipboardText(item);
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Click to copy");
             if (has_color) ImGui::PopStyleColor();
+            ImGui::PopID();
         }
 
         if (copy_to_clipboard)

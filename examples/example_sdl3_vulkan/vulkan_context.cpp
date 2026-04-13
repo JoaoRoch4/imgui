@@ -1,4 +1,5 @@
 // VOLK_IMPLEMENTATION must be defined before any header that includes <volk.h>.
+#include <bit>
 #ifdef IMGUI_IMPL_VULKAN_USE_VOLK
 #define VOLK_IMPLEMENTATION
 #endif
@@ -85,7 +86,7 @@ void VulkanContext::Setup(ImVector<const char*> instance_extensions)
 #endif
 #ifdef APP_USE_VULKAN_DEBUG_REPORT
         auto f_vkCreateDebugReportCallbackEXT =
-            reinterpret_cast<PFN_vkCreateDebugReportCallbackEXT>(vkGetInstanceProcAddr(Instance, "vkCreateDebugReportCallbackEXT"));
+            std::bit_cast<PFN_vkCreateDebugReportCallbackEXT>((vkGetInstanceProcAddr(Instance, "vkCreateDebugReportCallbackEXT")));
         IM_ASSERT(f_vkCreateDebugReportCallbackEXT != nullptr);
         VkDebugReportCallbackCreateInfoEXT debug_report_ci = {};
         debug_report_ci.sType    = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT;
@@ -196,7 +197,7 @@ void VulkanContext::Cleanup()
     vkDestroyDescriptorPool(Device, DescriptorPool, Allocator);
 #ifdef APP_USE_VULKAN_DEBUG_REPORT
     auto f_vkDestroyDebugReportCallbackEXT =
-        (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(Instance, "vkDestroyDebugReportCallbackEXT");
+        std::bit_cast<PFN_vkDestroyDebugReportCallbackEXT>(vkGetInstanceProcAddr(Instance, "vkDestroyDebugReportCallbackEXT"));
     f_vkDestroyDebugReportCallbackEXT(Instance, DebugReport, Allocator);
 #endif
     vkDestroyDevice(Device, Allocator);

@@ -2,7 +2,7 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "bear_make",
+            "label": "make: rebuild (bear)",
             "type": "shell",
             "command": "bear -- make clean && bear -- make -j$(nproc)",
             "options": {
@@ -21,7 +21,7 @@
             }
         },
         {
-            "label": "make: example_sdl3_vulkan",
+            "label": "make: build (all)",
             "type": "shell",
             "command": "make -j$(nproc)",
             "options": {
@@ -41,6 +41,31 @@
                 "reveal": "silent",
                 "panel": "shared"
             }
+        },
+        {
+            "label": "make: clean",
+            "type": "shell",
+            "command": "make clean",
+            "options": {
+                "cwd": "${workspaceFolder}/examples/example_sdl3_vulkan",
+                "env": {
+                    "PATH": "/home/joao/miniconda3/envs/imgui-cpp/bin:/usr/local/bin:/usr/bin:/bin"
+                }
+            },
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "make: rebuild (all)",
+            "dependsOn": [
+                "make: clean",
+                "make: build (all)"
+            ],
+            "dependsOrder": "sequence",
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ]
         },
         {
             "label": "tail: debug log",
@@ -66,9 +91,9 @@
             }
         },
         {
-            "label": "build + tail debug log",
+            "label": "make: build + tail debug log",
             "dependsOn": [
-                "make: example_sdl3_vulkan",
+                "make: build (all)",
                 "tail: debug log"
             ],
             "dependsOrder": "parallel"
@@ -112,6 +137,44 @@
             }
         },
         {
+            "label": "cmake: build (debug vulkan)",
+            "type": "shell",
+            "command": "cmake --build --preset linux-debug --target example_sdl3_vulkan --parallel $(nproc)",
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "/home/joao/miniconda3/envs/imgui-cpp/bin:/usr/local/bin:/usr/bin:/bin"
+                }
+            },
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "cmake: build (debug sdlgpu3)",
+            "type": "shell",
+            "command": "cmake --build --preset linux-debug --target example_sdl3_sdlgpu3 --parallel $(nproc)",
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "/home/joao/miniconda3/envs/imgui-cpp/bin:/usr/local/bin:/usr/bin:/bin"
+                }
+            },
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared"
+            }
+        },
+        {
             "label": "cmake: clean",
             "type": "shell",
             "command": "cmake --build --preset linux-debug --target clean",
@@ -127,6 +190,7 @@
         {
             "label": "cmake: rebuild (debug)",
             "dependsOn": [
+                "cmake: configure",
                 "cmake: clean",
                 "cmake: build (debug)"
             ],
@@ -143,9 +207,7 @@
                 "tail: debug log"
             ],
             "dependsOrder": "parallel",
-            "problemMatcher": [
-                "$codelldb-rustc"
-            ]
+            "problemMatcher": []
         }
     ]
 }

@@ -6,7 +6,9 @@
             "hidden": true,
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/${presetName}",
+            "toolchainFile": "/home/joao/vcpkg/scripts/buildsystems/vcpkg.cmake",
             "cacheVariables": {
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "CMAKE_C_COMPILER":   "/usr/bin/clang",
                 "CMAKE_CXX_COMPILER": "/usr/bin/clang++"

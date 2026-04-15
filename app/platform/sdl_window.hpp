@@ -3,9 +3,8 @@
 #include "imgui.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
+#include <functional>
 #include <vector>
-
-class ImGuiLayer; // forward declaration — avoids circular include
 
 // SDLWindow owns the OS window, SDL lifecycle, and Vulkan surface creation.
 class SDLWindow
@@ -39,6 +38,6 @@ public:
     bool IsMinimized() const;
 
     // Drain the SDL event queue.  Sets done=true on quit/close events.
-    // Forwards every event to imgui->ProcessEvent() when imgui != nullptr.
-    void PollEvents(bool& done, ImGuiLayer* imgui);
+    // Optionally forwards each event to the callback.
+    void PollEvents(bool& done, const std::function<void(const SDL_Event*)>& event_callback = {});
 };

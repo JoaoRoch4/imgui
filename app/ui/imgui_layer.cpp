@@ -1,6 +1,8 @@
 #include "imgui_layer.hpp"
-#include "../../misc/freetype/imgui_freetype.h"
+#include "emoji_atlas.hpp"
+#include "imgui_freetype.h"
 
+#include <array>
 #include <format>
 #include <string>
 
@@ -10,6 +12,7 @@ ImGuiLayer::ImGuiLayer()
     , ShowDebugLogMirrorWindow{true}
     , ShowTerminalWindow{true}
     , ShowTestEngineWindow{true}
+    , ShowEmojiAtlasWindow{true}
     , RequestQuit{false}
     , ClearColor{0.45f, 0.55f, 0.60f, 1.00f}
 {}
@@ -65,9 +68,37 @@ void ImGuiLayer::Init(SDL_Window* window, ImGui_ImplVulkan_InitInfo& init_info, 
             0.0f, &cfg);
     }
 
-    // 3. Merge color emoji (UTF-16 / surrogate-pair range, i.e. U+1F000…U+1FFFF).
+    // 3. Merge Arabic (covers Arabic script + Arabic Presentation Forms U+FE70-U+FEFF).
+    {
+        ImFontConfig cfg;
+        cfg.MergeMode = true;
+        io.Fonts->AddFontFromFileTTF(
+            "/home/joao/.local/share/fonts/google/NotoSansArabic[wdth,wght].ttf",
+            0.0f, &cfg);
+    }
+
+    // 4. Merge Mathematical symbols — covers Mathematical Alphanumeric Symbols
+    //    (U+1D400–U+1D7FF): Fraktur, Script, Double-struck, etc.
+    {
+        ImFontConfig cfg;
+        cfg.MergeMode = true;
+        io.Fonts->AddFontFromFileTTF(
+            "/home/joao/.local/share/fonts/google/NotoSansMath-Regular.ttf",
+            0.0f, &cfg);
+    }
+
+    // 5. Merge Symbols & Symbols 2 — covers rare/historic scripts, ꙮ, etc.
+    {
+        ImFontConfig cfg;
+        cfg.MergeMode = true;
+        io.Fonts->AddFontFromFileTTF(
+            "/home/joao/.local/share/fonts/google/NotoSansSymbols2-Regular.ttf",
+            0.0f, &cfg);
+    }
+
+    // 6. Merge color emoji.
     //    Requires IMGUI_USE_WCHAR32 + IMGUI_ENABLE_FREETYPE + LoadColor.
-    //    PlutoSVG (IMGUI_ENABLE_FREETYPE_PLUTOSVG) handles COLRv1 outlines.
+    //    PlutoSVG (IMGUI_ENABLE_FREETYPE_PLUTOSVG) handles COLRv1/SVG outlines.
     {
         ImFontConfig cfg;
         cfg.MergeMode       = true;
@@ -90,8 +121,16 @@ void ImGuiLayer::AddTerminal(const char* name)
     TerminalTab t;
     t.name    = name ? name : ("Terminal " + std::to_string(Terminals.size() + 1));
     t.console = std::make_unique<ConsoleCommands>();
+    t.console->SetEmojiAtlas(EmojiAtlasView);
     WireTerminalCallbacks(*t.console);
     Terminals.push_back(std::move(t));
+}
+
+void ImGuiLayer::SetEmojiAtlas(const EmojiAtlas* atlas)
+{
+    EmojiAtlasView = atlas;
+    for (TerminalTab& terminal : Terminals)
+        terminal.console->SetEmojiAtlas(atlas);
 }
 
 void ImGuiLayer::DrawTerminals()
@@ -126,6 +165,56 @@ void ImGuiLayer::DrawTerminals()
             AddTerminal();
         ImGui::EndTabBar();
     }
+    ImGui::End();
+}
+
+void ImGuiLayer::DrawEmojiAtlasWindow()
+{
+    if (EmojiAtlasView == nullptr)
+        return;
+
+    ImGui::SetNextWindowSize(ImVec2(420.0f, 260.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Emoji Atlas", &ShowEmojiAtlasWindow))
+    {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Text("Merged text path:");
+    ImGui::TextUnformatted("\xF0\x9F\x8C\x9F  \xF0\x9F\x9A\x80");
+    ImGui::Separator();
+
+    struct EmojiSample {
+        ImWchar     codepoint;
+        const char* label;
+    };
+    const std::array<EmojiSample, 2> samples {{
+        { static_cast<ImWchar>(0x1F31F), "U+1F31F glowing star" },
+        { static_cast<ImWchar>(0x1F680), "U+1F680 rocket" },
+    }};
+
+    for (const EmojiSample& sample : samples)
+    {
+        ImGui::TextUnformatted(sample.label);
+        const EmojiAtlas::GlyphEntry* glyph = EmojiAtlasView->LookupGlyph(sample.codepoint);
+        if (glyph == nullptr)
+        {
+            ImGui::TextUnformatted("Atlas glyph missing");
+            continue;
+        }
+
+        const ImVec2 image_size {
+            static_cast<float>(glyph->RenderW) * 2.0f,
+            static_cast<float>(glyph->RenderH) * 2.0f,
+        };
+        ImGui::Image(EmojiAtlasView->GetTextureRef(), image_size,
+                     ImVec2(glyph->U0, glyph->V0), ImVec2(glyph->U1, glyph->V1));
+        ImGui::SameLine();
+        ImGui::Text("%dx%d", glyph->RenderW, glyph->RenderH);
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Atlas size: %d x %d", EmojiAtlasView->AtlasWidth(), EmojiAtlasView->AtlasHeight());
     ImGui::End();
 }
 
@@ -168,6 +257,7 @@ void ImGuiLayer::BuildUI()
         ImGui::Checkbox("Debug Log",      &ShowDebugLogMirrorWindow);
         ImGui::Checkbox("Terminals",        &ShowTerminalWindow);
         ImGui::Checkbox("Test Engine",    &ShowTestEngineWindow);
+        ImGui::Checkbox("Emoji Atlas",    &ShowEmojiAtlasWindow);
         ImGui::SliderFloat("float", &f, 0.0f, 1.0f);
         ImGui::ColorEdit3("clear color", &ClearColor.x);
         if (ImGui::Button("Button"))
@@ -186,6 +276,9 @@ void ImGuiLayer::BuildUI()
     // 4. Terminal window.
     if (ShowTerminalWindow)
         DrawTerminals();
+
+    if (ShowEmojiAtlasWindow)
+        DrawEmojiAtlasWindow();
 
     // 5. Show another simple window.
     if (ShowAnotherWindow)

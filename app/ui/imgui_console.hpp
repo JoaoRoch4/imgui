@@ -14,6 +14,7 @@
 
 // Forward declaration so ConsoleCommandFn can reference the class.
 class ImGuiConsole;
+class EmojiAtlas;
 
 // ── ConsoleCommandArgs ────────────────────────────────────────────────────────
 // Parsed view of a single command line, passed to every command handler.
@@ -90,6 +91,8 @@ public:
     // Parse and dispatch a command-line string (called internally on Enter).
     void ExecCommand(const char* command_line);
 
+    void SetEmojiAtlas(const EmojiAtlas* atlas) { EmojiAtlasView_ = atlas; }
+
 protected:
     std::array<char, 512>           InputBuf;
     std::vector<std::string>          Items;
@@ -124,6 +127,7 @@ protected:
     // themselves are protected per-field (atomics + fd_mutex inside BashSession).
     std::mutex                       BashSessionMutex_;
     std::shared_ptr<BashSession>     ActiveBashSession_;
+    const EmojiAtlas*                EmojiAtlasView_ { nullptr };
 };
 
 // ── ConsoleCommands ───────────────────────────────────────────────────────────

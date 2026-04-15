@@ -2,6 +2,7 @@
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 #include "imgui_te_ui.h"
+#include <cstring>
 
 TestEngineLayer::TestEngineLayer()
     : Engine { nullptr }
@@ -16,6 +17,7 @@ void TestEngineLayer::Init()
 	test_io.ConfigVerboseLevel = ImGuiTestVerboseLevel_Info;
 	test_io.ConfigVerboseLevelOnError = ImGuiTestVerboseLevel_Debug;
 	test_io.ConfigRunSpeed = ImGuiTestRunSpeed_Fast;
+	std::strncpy(test_io.VideoCaptureEncoderPath, "/usr/bin/ffmpeg", sizeof(test_io.VideoCaptureEncoderPath) - 1);
 
 	ImGuiTestEngine_Start(Engine, ImGui::GetCurrentContext());
 	RegisterTests();

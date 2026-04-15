@@ -1,36 +1,129 @@
 #include "imgui_console.hpp"
 
-#include <algorithm>   // std::max
-#include <atomic>      // std::atomic
-#include <cctype>      // toupper
-#include <cerrno>      // errno
-#include <cstdio>      // FILE, popen, pclose, fgets
-#include <cstring>     // strlen, strcpy, strstr, strncmp, memcpy, strerror
-#include <fcntl.h>     // posix_openpt, O_RDWR, O_NOCTTY
-#include <fstream>     // std::ifstream
-#include <memory>      // std::shared_ptr
-#include <mutex>       // std::mutex, std::lock_guard
-#include <poll.h>      // poll, pollfd
-#include <string>      // std::string, std::stoi
+#include "emoji_atlas.hpp"
+
+#include <algorithm> // std::max
+#include <atomic> // std::atomic
+#include <cctype> // toupper
+#include <cerrno> // errno
+#include <cstdio> // FILE, popen, pclose, fgets
+#include <cstring> // strlen, strcpy, strstr, strncmp, memcpy, strerror
+#include <fcntl.h> // posix_openpt, O_RDWR, O_NOCTTY
+#include <fstream> // std::ifstream
+#include <memory> // std::shared_ptr
+#include <mutex> // std::mutex, std::lock_guard
+#include <poll.h> // poll, pollfd
+#include <string> // std::string, std::stoi
 #include <sys/ioctl.h> // ioctl, TIOCSCTTY
 #include <sys/types.h> // pid_t
-#include <sys/wait.h>  // waitpid, WIFEXITED, WEXITSTATUS, WIFSIGNALED, WTERMSIG
-#include <thread>      // std::thread
-#include <unistd.h>    // fork, setsid, dup2, close, read, write, execl, _exit
-#include <vector>      // std::vector
+#include <sys/wait.h> // waitpid, WIFEXITED, WEXITSTATUS, WIFSIGNALED, WTERMSIG
+#include <thread> // std::thread
+#include <unistd.h> // fork, setsid, dup2, close, read, write, execl, _exit
+#include <vector> // std::vector
+
+namespace {
+
+std::string_view TrimLineBreaks(std::string_view text)
+{
+	while (!text.empty() && (text.back() == '\n' || text.back() == '\r'))
+		text.remove_suffix(1);
+	return text;
+}
+
+bool MeasureOrDrawEmojiSequenceLine(const EmojiAtlas* atlas, std::string_view text,
+	const ImVec2& origin, ImU32 text_color, bool draw, float& out_width)
+{
+	if (atlas == nullptr || !atlas->HasSequences())
+		return false;
+
+	text = TrimLineBreaks(text);
+	const char* base = text.data();
+	const float line_height = ImGui::GetTextLineHeight();
+	ImDrawList* draw_list = draw ? ImGui::GetWindowDrawList() : nullptr;
+	float x = origin.x;
+	size_t text_start = 0;
+	bool used_sequences = false;
+
+	for (size_t index = 0; index < text.size(); ) {
+		const EmojiAtlas::GlyphEntry* glyph = nullptr;
+		size_t matched_bytes = 0;
+		if (!atlas->LookupSequencePrefix(text, index, glyph, matched_bytes) || glyph == nullptr) {
+			++index;
+			continue;
+		}
+
+		used_sequences = true;
+		if (index > text_start) {
+			const char* begin = base + text_start;
+			const char* end = base + index;
+			const float text_width = ImGui::CalcTextSize(begin, end).x;
+			if (draw)
+				draw_list->AddText(ImVec2(x, origin.y), text_color, begin, end);
+			x += text_width;
+		}
+
+		const float image_h = line_height;
+		const float image_w = (glyph->RenderH > 0)
+			? image_h * static_cast<float>(glyph->RenderW) / static_cast<float>(glyph->RenderH)
+			: image_h;
+		if (draw) {
+			draw_list->AddImage(atlas->GetTextureRef(),
+				ImVec2(x, origin.y), ImVec2(x + image_w, origin.y + image_h),
+				ImVec2(glyph->U0, glyph->V0), ImVec2(glyph->U1, glyph->V1), IM_COL32_WHITE);
+		}
+		x += image_w;
+		index += matched_bytes;
+		text_start = index;
+	}
+
+	if (!used_sequences)
+		return false;
+
+	if (text_start < text.size()) {
+		const char* begin = base + text_start;
+		const char* end = base + text.size();
+		const float text_width = ImGui::CalcTextSize(begin, end).x;
+		if (draw)
+			draw_list->AddText(ImVec2(x, origin.y), text_color, begin, end);
+		x += text_width;
+	}
+
+	out_width = x - origin.x;
+	return true;
+}
+
+void DrawEmojiSequencePreview(const EmojiAtlas* atlas, std::string_view text)
+{
+	float preview_width = 0.0f;
+	const ImU32 text_color = ImGui::GetColorU32(ImGuiCol_Text);
+	if (!MeasureOrDrawEmojiSequenceLine(atlas, text, ImVec2(0.0f, 0.0f), text_color, false,
+			preview_width))
+		return;
+
+	ImGui::Spacing();
+	ImGui::TextDisabled("Preview:");
+	ImGui::SameLine();
+	const ImVec2 origin = ImGui::GetCursorScreenPos();
+	float drawn_width = 0.0f;
+	MeasureOrDrawEmojiSequenceLine(atlas, text, origin, text_color, true, drawn_width);
+	ImGui::Dummy(ImVec2(std::max(preview_width, 1.0f), ImGui::GetTextLineHeight()));
+}
+
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // BashSession — PTY state shared between main thread and worker thread
 // ══════════════════════════════════════════════════════════════════════════════
 
 struct BashSession {
-	std::atomic<int> master_fd{-1};       // master PTY fd; -1 = already closed
-	std::atomic<bool> running{true};      // worker thread is alive
-	std::atomic<bool> needs_input{false}; // password prompt has been detected
-	std::atomic<bool> terminal_mode{
-		false};               // interactive TTY: forward all input
-	std::array<char, 256> password_buf{}; // filled by the main thread on Enter
-	std::mutex fd_mutex;      // serialises write (main) vs close (worker)
+	std::atomic<int> master_fd { -1 }; // master PTY fd; -1 = already closed
+	std::atomic<bool> running { true }; // worker thread is alive
+	std::atomic<bool> needs_input { false }; // password prompt has been detected
+	std::atomic<bool> terminal_mode {
+		false
+	}; // interactive TTY: forward all input
+	std::array<char, 256> password_buf {}; // filled by the main thread on Enter
+	std::mutex fd_mutex; // serialises write (main) vs close (worker)
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -38,18 +131,19 @@ struct BashSession {
 // ══════════════════════════════════════════════════════════════════════════════
 
 ImGuiConsole::ImGuiConsole()
-	: InputBuf{}
-	, HistoryPos{-1}
-	, AutoScroll{true}
-	, ScrollToBottom{false}
-	, SelectedItem_{}
-	, Alive_{std::make_shared<std::atomic<bool>>(true)}
-	, BashJobCount_{0}
+    : InputBuf {}
+    , HistoryPos { -1 }
+    , AutoScroll { true }
+    , ScrollToBottom { false }
+    , SelectedItem_ {}
+    , Alive_ { std::make_shared<std::atomic<bool>>(true) }
+    , BashJobCount_ { 0 }
 {
 	AddLog("Console ready. Type HELP for a list of commands.\n");
 }
 
-ImGuiConsole::~ImGuiConsole() {
+ImGuiConsole::~ImGuiConsole()
+{
 	// Signal any running background threads that the console is gone.
 	*Alive_ = false;
 	ClearLog();
@@ -57,33 +151,37 @@ ImGuiConsole::~ImGuiConsole() {
 
 // ─── ClearLog ────────────────────────────────────────────────────────────────
 
-void ImGuiConsole::ClearLog() {
+void ImGuiConsole::ClearLog()
+{
 	Items.clear();
 	SelectedItem_.clear();
 }
 
 // ─── AddLog ──────────────────────────────────────────────────────────────────
 
-void ImGuiConsole::AddLog(std::string line) {
+void ImGuiConsole::AddLog(std::string line)
+{
 	Items.emplace_back(std::move(line));
 }
 
 // ─── RegisterCommand ─────────────────────────────────────────────────────────
 
-void ImGuiConsole::RegisterCommand(const char *name, const char *description,
-								   ConsoleCommandFn fn) {
+void ImGuiConsole::RegisterCommand(const char* name, const char* description,
+	ConsoleCommandFn fn)
+{
 	ConsoleCommandDef def;
 	def.description = description;
 	def.fn = std::move(fn);
 	def.name = name;
-	for (char &c : def.name)
+	for (char& c : def.name)
 		c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
 	Commands.push_back(std::move(def));
 }
 
 // ─── ExecCommand ─────────────────────────────────────────────────────────────
 
-void ImGuiConsole::ExecCommand(const char *command_line) {
+void ImGuiConsole::ExecCommand(const char* command_line)
+{
 	AddLog(std::format("# {}\n", command_line));
 
 	// ── History (deduplicate, most-recent at end)
@@ -100,13 +198,13 @@ void ImGuiConsole::ExecCommand(const char *command_line) {
 	// ────────────────────────────────────────────────
 	std::vector<std::string> tokens;
 	{
-		const char *p = command_line;
+		const char* p = command_line;
 		while (*p) {
 			while (*p == ' ' || *p == '\t')
 				++p;
 			if (!*p)
 				break;
-			const char *start = p;
+			const char* start = p;
 			while (*p && *p != ' ' && *p != '\t')
 				++p;
 			tokens.emplace_back(start, p - start);
@@ -116,11 +214,11 @@ void ImGuiConsole::ExecCommand(const char *command_line) {
 		return;
 
 	// Upper-case command name
-	for (char &c : tokens.at(0))
+	for (char& c : tokens.at(0))
 		c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
 
 	// raw_args: everything after the command token, leading whitespace stripped
-	const char *raw_start = command_line;
+	const char* raw_start = command_line;
 	while (*raw_start && *raw_start != ' ' && *raw_start != '\t')
 		++raw_start;
 	while (*raw_start == ' ' || *raw_start == '\t')
@@ -128,12 +226,12 @@ void ImGuiConsole::ExecCommand(const char *command_line) {
 
 	std::vector<std::string> args_vec(tokens.begin() + 1, tokens.end());
 
-	ConsoleCommandArgs cargs{std::string_view(tokens.at(0)), std::move(args_vec),
-							 std::string_view(raw_start)};
+	ConsoleCommandArgs cargs { std::string_view(tokens.at(0)), std::move(args_vec),
+		std::string_view(raw_start) };
 
 	// ── Dispatch
 	// ──────────────────────────────────────────────────────────────
-	for (auto &cmd : Commands) {
+	for (auto& cmd : Commands) {
 		if (cmd.name == tokens.at(0)) {
 			cmd.fn(*this, cargs);
 			ScrollToBottom = true;
@@ -149,7 +247,8 @@ void ImGuiConsole::ExecCommand(const char *command_line) {
 
 // ─── AddLogThreadSafe ────────────────────────────────────────────────────────
 
-void ImGuiConsole::AddLogThreadSafe(std::string line) {
+void ImGuiConsole::AddLogThreadSafe(std::string line)
+{
 	std::lock_guard<std::mutex> lk(PendingMutex_);
 	PendingLines_.push_back(std::move(line));
 }
@@ -157,20 +256,22 @@ void ImGuiConsole::AddLogThreadSafe(std::string line) {
 // ─── FlushPendingLogs
 // ─────────────────────────────────────────────────────────
 
-void ImGuiConsole::FlushPendingLogs() {
+void ImGuiConsole::FlushPendingLogs()
+{
 	std::vector<std::string> tmp;
 	{
 		std::lock_guard<std::mutex> lk(PendingMutex_);
 		tmp.swap(PendingLines_);
 	}
-	for (auto &line : tmp)
+	for (auto& line : tmp)
 		AddLog(std::move(line));
 }
 
 // ─── Draw
 // ─────────────────────────────────────────────────────────────────────
 
-void ImGuiConsole::DrawContents(const char *id) {
+void ImGuiConsole::DrawContents(const char* id)
+{
 	FlushPendingLogs();
 	ImGui::PushID(id);
 
@@ -194,10 +295,9 @@ void ImGuiConsole::DrawContents(const char *id) {
 
 	// ── Scrolling log region
 	// ──────────────────────────────────────────────────
-	const float footer =
-		ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
+	const float footer = ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
 	if (ImGui::BeginChild("##log", ImVec2(0, -footer), ImGuiChildFlags_None,
-						  ImGuiWindowFlags_HorizontalScrollbar)) {
+		    ImGuiWindowFlags_HorizontalScrollbar)) {
 		if (ImGui::BeginPopupContextWindow()) {
 			if (ImGui::Selectable("Clear"))
 				ClearLog();
@@ -209,23 +309,23 @@ void ImGuiConsole::DrawContents(const char *id) {
 			ImGui::LogToClipboard();
 
 		int display_idx = 0;
-		for (const auto &item : Items) {
+		for (const auto& item : Items) {
 			if (!Filter.PassFilter(item.c_str()))
 				continue;
 
 			ImVec4 color = {};
 			bool has_color = false;
 			if (std::strstr(item.c_str(), "[error]")) {
-				color = {1.0f, 0.4f, 0.4f, 1.0f};
+				color = { 1.0f, 0.4f, 0.4f, 1.0f };
 				has_color = true;
 			} else if (std::strstr(item.c_str(), "[warn]")) {
-				color = {1.0f, 1.0f, 0.4f, 1.0f};
+				color = { 1.0f, 1.0f, 0.4f, 1.0f };
 				has_color = true;
 			} else if (std::strncmp(item.c_str(), "# ", 2) == 0) {
-				color = {1.0f, 0.8f, 0.6f, 1.0f};
+				color = { 1.0f, 0.8f, 0.6f, 1.0f };
 				has_color = true;
 			} else if (std::strncmp(item.c_str(), "$ ", 2) == 0) {
-				color = {0.4f, 1.0f, 0.4f, 1.0f};
+				color = { 0.4f, 1.0f, 0.4f, 1.0f };
 				has_color = true;
 			}
 
@@ -233,29 +333,56 @@ void ImGuiConsole::DrawContents(const char *id) {
 			ImGui::PushID(display_idx++);
 			if (item.at(0) == '\x01') {
 				// Two-column command listing: \x01NAME\tDESCRIPTION
-				const char *tab = std::strchr(item.c_str() + 1, '\t');
+				const char* tab = std::strchr(item.c_str() + 1, '\t');
 				if (tab) {
-					ImGui::TextColored({1.0f, 1.0f, 0.0f, 1.0f}, "%.*s",
-									   static_cast<int>(tab - (item.c_str() + 1)), item.c_str() + 1);
+					ImGui::TextColored({ 1.0f, 1.0f, 0.0f, 1.0f }, "%.*s",
+						static_cast<int>(tab - (item.c_str() + 1)), item.c_str() + 1);
 					ImGui::SameLine(120.0f);
-					const char *desc = tab + 1;
+					const char* desc = tab + 1;
 					size_t dl = std::strlen(desc);
-					while (dl > 0 && (desc[dl-1] == '\n' || desc[dl-1] == '\r')) --dl;
-					ImGui::TextColored({0.4f, 1.0f, 0.4f, 1.0f}, "%.*s",
-									   static_cast<int>(dl), desc);
+					while (dl > 0 && (desc[dl - 1] == '\n' || desc[dl - 1] == '\r'))
+						--dl;
+					ImGui::TextColored({ 0.4f, 1.0f, 0.4f, 1.0f }, "%.*s",
+						static_cast<int>(dl), desc);
 				} else {
-					ImGui::TextColored({1.0f, 1.0f, 0.0f, 1.0f}, "%s", item.c_str() + 1);
+					ImGui::TextColored({ 1.0f, 1.0f, 0.0f, 1.0f }, "%s", item.c_str() + 1);
 				}
 			} else {
 				if (has_color)
 					ImGui::PushStyleColor(ImGuiCol_Text, color);
-				if (ImGui::Selectable(item.c_str(), is_selected,
-									  ImGuiSelectableFlags_None)) {
-					SelectedItem_ = item;
-					ImGui::SetClipboardText(item.c_str());
+				const ImU32 text_color = has_color
+					? ImGui::GetColorU32(color)
+					: ImGui::GetColorU32(ImGuiCol_Text);
+				float measured_width = 0.0f;
+				const bool can_draw_sequences = MeasureOrDrawEmojiSequenceLine(
+					EmojiAtlasView_, item, ImVec2(0.0f, 0.0f), text_color, false, measured_width);
+				if (can_draw_sequences) {
+					const ImVec2 item_pos = ImGui::GetCursorScreenPos();
+					const ImVec2 item_size(std::max(measured_width, 1.0f), ImGui::GetTextLineHeight());
+					if (ImGui::InvisibleButton("##emoji_line", item_size)) {
+						SelectedItem_ = item;
+						ImGui::SetClipboardText(item.c_str());
+					}
+					const bool hovered = ImGui::IsItemHovered();
+					if (is_selected || hovered) {
+						const ImU32 bg_color = ImGui::GetColorU32(
+							is_selected ? ImGuiCol_Header : ImGuiCol_HeaderHovered);
+						ImGui::GetWindowDrawList()->AddRectFilled(item_pos,
+							ImVec2(item_pos.x + item_size.x, item_pos.y + item_size.y), bg_color);
+					}
+					float drawn_width = 0.0f;
+					MeasureOrDrawEmojiSequenceLine(EmojiAtlasView_, item, item_pos, text_color, true, drawn_width);
+					if (hovered)
+						ImGui::SetTooltip("Click to copy");
+				} else {
+					if (ImGui::Selectable(item.c_str(), is_selected,
+						    ImGuiSelectableFlags_None)) {
+						SelectedItem_ = item;
+						ImGui::SetClipboardText(item.c_str());
+					}
+					if (ImGui::IsItemHovered())
+						ImGui::SetTooltip("Click to copy");
 				}
-				if (ImGui::IsItemHovered())
-					ImGui::SetTooltip("Click to copy");
 				if (has_color)
 					ImGui::PopStyleColor();
 			}
@@ -265,8 +392,7 @@ void ImGuiConsole::DrawContents(const char *id) {
 		if (copy_to_clipboard)
 			ImGui::LogFinish();
 
-		if (ScrollToBottom ||
-			(AutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()))
+		if (ScrollToBottom || (AutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()))
 			ImGui::SetScrollHereY(1.0f);
 		ScrollToBottom = false;
 
@@ -296,8 +422,7 @@ void ImGuiConsole::DrawContents(const char *id) {
 		ImGui::SameLine();
 		ImGui::SetNextItemWidth(-1.0f);
 		if (ImGui::InputText("##tty_input", InputBuf.data(), InputBuf.size(),
-							 ImGuiInputTextFlags_EnterReturnsTrue |
-								 ImGuiInputTextFlags_EscapeClearsAll)) {
+			    ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_EscapeClearsAll)) {
 			std::string line(InputBuf.data());
 			line += '\n';
 			{
@@ -319,10 +444,8 @@ void ImGuiConsole::DrawContents(const char *id) {
 		ImGui::SameLine();
 		ImGui::SetNextItemWidth(-1.0f);
 		if (ImGui::InputText("##pw_input", active_session->password_buf.data(),
-							 active_session->password_buf.size(),
-							 ImGuiInputTextFlags_EnterReturnsTrue |
-								 ImGuiInputTextFlags_Password |
-								 ImGuiInputTextFlags_EscapeClearsAll)) {
+			    active_session->password_buf.size(),
+			    ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_Password | ImGuiInputTextFlags_EscapeClearsAll)) {
 			// Send password + newline to child process via PTY
 			std::string pw(active_session->password_buf.data());
 			pw += '\n';
@@ -342,13 +465,10 @@ void ImGuiConsole::DrawContents(const char *id) {
 	} else {
 		// ── Normal command mode
 		// ───────────────────────────────────────────────
-		ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue |
-									ImGuiInputTextFlags_EscapeClearsAll |
-									ImGuiInputTextFlags_CallbackCompletion |
-									ImGuiInputTextFlags_CallbackHistory;
+		ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_EscapeClearsAll | ImGuiInputTextFlags_CallbackCompletion | ImGuiInputTextFlags_CallbackHistory;
 		ImGui::SetNextItemWidth(-1.0f);
 		if (ImGui::InputText("##input", InputBuf.data(), InputBuf.size(), flags,
-							 &TextEditCallbackStub, this)) {
+			    &TextEditCallbackStub, this)) {
 			Strtrim(InputBuf.data());
 			if (InputBuf.at(0))
 				ExecCommand(InputBuf.data());
@@ -358,18 +478,20 @@ void ImGuiConsole::DrawContents(const char *id) {
 		ImGui::SetItemDefaultFocus();
 		if (reclaim_focus)
 			ImGui::SetKeyboardFocusHere(-1);
+		DrawEmojiSequencePreview(EmojiAtlasView_, std::string_view(InputBuf.data()));
 	}
 
 	ImGui::PopID();
 }
 
-void ImGuiConsole::Draw(const char *title, bool *p_open) {
+void ImGuiConsole::Draw(const char* title, bool* p_open)
+{
 	ImGui::SetNextWindowSize(ImVec2(640, 480), ImGuiCond_FirstUseEver);
 	if (!ImGui::Begin(title, p_open)) {
 		ImGui::End();
 		return;
 	}
-	std::string uid = std::format("{:p}", static_cast<void *>(this));
+	std::string uid = std::format("{:p}", static_cast<void*>(this));
 	DrawContents(uid.c_str());
 	ImGui::End();
 }
@@ -377,15 +499,17 @@ void ImGuiConsole::Draw(const char *title, bool *p_open) {
 // ─── TextEditCallback
 // ─────────────────────────────────────────────────────────
 
-int ImGuiConsole::TextEditCallbackStub(ImGuiInputTextCallbackData *data) {
-	return static_cast<ImGuiConsole *>(data->UserData)->TextEditCallback(data);
+int ImGuiConsole::TextEditCallbackStub(ImGuiInputTextCallbackData* data)
+{
+	return static_cast<ImGuiConsole*>(data->UserData)->TextEditCallback(data);
 }
 
-int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
+int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData* data)
+{
 	if (data->EventFlag == ImGuiInputTextFlags_CallbackCompletion) {
 		// Identify the word being completed
-		const char *word_end = data->Buf + data->CursorPos;
-		const char *word_start = word_end;
+		const char* word_end = data->Buf + data->CursorPos;
+		const char* word_start = word_end;
 		while (word_start > data->Buf) {
 			char c = word_start[-1];
 			if (c == ' ' || c == '\t' || c == ',' || c == ';')
@@ -396,15 +520,16 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 		// Collect matching commands
 		std::vector<int> candidates; // indices into Commands
 		for (int ci = 0; ci < static_cast<int>(Commands.size()); ++ci)
-				if (Strnicmp(Commands.at(ci).name.c_str(), word_start,
-						 static_cast<int>(word_end - word_start)) == 0)
+			if (Strnicmp(Commands.at(ci).name.c_str(), word_start,
+				    static_cast<int>(word_end - word_start))
+				== 0)
 				candidates.push_back(ci);
 
 		if (candidates.size() == 0) {
 			AddLog(std::format("No completion for \"{}\"\n", std::string_view(word_start, static_cast<std::size_t>(word_end - word_start))));
 		} else if (candidates.size() == 1) {
 			data->DeleteChars(static_cast<int>(word_start - data->Buf),
-							  static_cast<int>(word_end - word_start));
+				static_cast<int>(word_end - word_start));
 			data->InsertChars(data->CursorPos, Commands.at(candidates.at(0)).name.c_str());
 			data->InsertChars(data->CursorPos, " ");
 			AddLog(std::format("\x01{}\t{}\n", Commands.at(candidates.at(0)).name, Commands.at(candidates.at(0)).description));
@@ -414,7 +539,7 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 			for (;;) {
 				int c = 0;
 				bool all_match = true;
-			for (int i = 0; i < static_cast<int>(candidates.size()) && all_match; ++i) {
+				for (int i = 0; i < static_cast<int>(candidates.size()) && all_match; ++i) {
 					const char ch = Commands.at(static_cast<std::size_t>(candidates.at(static_cast<std::size_t>(i)))).name.at(static_cast<std::size_t>(match_len));
 					if (i == 0)
 						c = toupper(static_cast<unsigned char>(ch));
@@ -427,8 +552,8 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 			}
 			if (match_len > static_cast<int>(word_end - word_start)) {
 				data->DeleteChars(static_cast<int>(word_start - data->Buf),
-								  static_cast<int>(word_end - word_start));
-				const char *first = Commands.at(candidates.at(0)).name.c_str();
+					static_cast<int>(word_end - word_start));
+				const char* first = Commands.at(candidates.at(0)).name.c_str();
 				data->InsertChars(data->CursorPos, first, first + match_len);
 			}
 			AddLog("Possible completions:\n");
@@ -448,10 +573,9 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 					HistoryPos = -1;
 		}
 		if (prev != HistoryPos) {
-			const char *entry =
-				HistoryPos >= 0
-					? History.at(static_cast<std::size_t>(HistoryPos)).c_str()
-					: "";
+			const char* entry = HistoryPos >= 0
+				? History.at(static_cast<std::size_t>(HistoryPos)).c_str()
+				: "";
 			data->DeleteChars(0, data->BufTextLen);
 			data->InsertChars(0, entry);
 		}
@@ -461,27 +585,25 @@ int ImGuiConsole::TextEditCallback(ImGuiInputTextCallbackData *data) {
 
 // ─── Static helpers ──────────────────────────────────────────────────────────
 
-int ImGuiConsole::Stricmp(const char *s1, const char *s2) {
-	int d{};
-	while ((d = toupper(static_cast<unsigned char>(*s2)) - toupper(static_cast<unsigned char>(*s1))) ==
-			   0 &&
-		   *s1)
+int ImGuiConsole::Stricmp(const char* s1, const char* s2)
+{
+	int d {};
+	while ((d = toupper(static_cast<unsigned char>(*s2)) - toupper(static_cast<unsigned char>(*s1))) == 0 && *s1)
 		++s1, ++s2;
 	return d;
 }
 
-int ImGuiConsole::Strnicmp(const char *s1, const char *s2, int n) {
+int ImGuiConsole::Strnicmp(const char* s1, const char* s2, int n)
+{
 	int d = 0;
-	while (n > 0 &&
-		   (d = toupper(static_cast<unsigned char>(*s2)) - toupper(static_cast<unsigned char>(*s1))) ==
-			   0 &&
-		   *s1)
+	while (n > 0 && (d = toupper(static_cast<unsigned char>(*s2)) - toupper(static_cast<unsigned char>(*s1))) == 0 && *s1)
 		--n, ++s1, ++s2;
 	return d;
 }
 
-void ImGuiConsole::Strtrim(char *s) {
-	char *end = s + std::strlen(s);
+void ImGuiConsole::Strtrim(char* s)
+{
+	char* end = s + std::strlen(s);
 	while (end > s && end[-1] == ' ')
 		--end;
 	*end = '\0';
@@ -491,59 +613,62 @@ void ImGuiConsole::Strtrim(char *s) {
 // ConsoleCommands — constructor: register all built-in commands
 // ══════════════════════════════════════════════════════════════════════════════
 
-ConsoleCommands::ConsoleCommands() {
+ConsoleCommands::ConsoleCommands()
+{
 	// Bind a member function pointer to a ConsoleCommandFn compatible lambda.
-	auto bind = [this](void (ConsoleCommands::*m)(const ConsoleCommandArgs &)) {
-		return [this, m](ImGuiConsole & /*c*/, const ConsoleCommandArgs &a) {
+	auto bind = [this](void (ConsoleCommands::*m)(const ConsoleCommandArgs&)) {
+		return [this, m](ImGuiConsole& /*c*/, const ConsoleCommandArgs& a) {
 			(this->*m)(a);
 		};
 	};
 
 	RegisterCommand("HELP", "List all registered commands",
-					bind(&ConsoleCommands::CmdHelp));
+		bind(&ConsoleCommands::CmdHelp));
 	RegisterCommand("HISTORY", "Print the last 10 history entries",
-					bind(&ConsoleCommands::CmdHistory));
+		bind(&ConsoleCommands::CmdHistory));
 	RegisterCommand("CLEAR", "Erase the console log",
-					bind(&ConsoleCommands::CmdClear));
+		bind(&ConsoleCommands::CmdClear));
 	RegisterCommand("ECHO", "Echo text: ECHO <text…>",
-					bind(&ConsoleCommands::CmdEcho));
+		bind(&ConsoleCommands::CmdEcho));
 	RegisterCommand("FPS", "Print current framerate",
-					bind(&ConsoleCommands::CmdFps));
+		bind(&ConsoleCommands::CmdFps));
 	RegisterCommand("STYLE", "Switch theme: STYLE DARK|LIGHT|CLASSIC",
-					bind(&ConsoleCommands::CmdStyle));
+		bind(&ConsoleCommands::CmdStyle));
 	RegisterCommand("DEMO", "Toggle demo window: DEMO ON|OFF",
-					bind(&ConsoleCommands::CmdDemo));
+		bind(&ConsoleCommands::CmdDemo));
 	RegisterCommand("LOG", "Tail debug log: LOG [n=20]",
-					bind(&ConsoleCommands::CmdLog));
+		bind(&ConsoleCommands::CmdLog));
 	RegisterCommand("SET", "Set variable: SET <name> <value…>",
-					bind(&ConsoleCommands::CmdSet));
+		bind(&ConsoleCommands::CmdSet));
 	RegisterCommand("GET", "Get variable: GET [name]",
-					bind(&ConsoleCommands::CmdGet));
+		bind(&ConsoleCommands::CmdGet));
 	RegisterCommand("BASH", "Run shell command: BASH <cmd> [args\u2026]",
-					bind(&ConsoleCommands::CmdBash));
+		bind(&ConsoleCommands::CmdBash));
 	RegisterCommand("COPILOT",
-					"Ask GitHub Copilot CLI: COPILOT <question\u2026>",
-					bind(&ConsoleCommands::CmdCopilot));
+		"Ask GitHub Copilot CLI: COPILOT <question\u2026>",
+		bind(&ConsoleCommands::CmdCopilot));
 	RegisterCommand("TERMINAL",
-					"Open interactive shell ($SHELL) in the console",
-					bind(&ConsoleCommands::CmdTerminal));
+		"Open interactive shell ($SHELL) in the console",
+		bind(&ConsoleCommands::CmdTerminal));
 	RegisterCommand("KONSOLE", "Alias for TERMINAL",
-					bind(&ConsoleCommands::CmdTerminal));
+		bind(&ConsoleCommands::CmdTerminal));
 	RegisterCommand("QUIT", "Exit the application",
-					bind(&ConsoleCommands::CmdQuit));
+		bind(&ConsoleCommands::CmdQuit));
 }
 
 // ── HELP ─────────────────────────────────────────────────────────────────────
 
-void ConsoleCommands::CmdHelp(const ConsoleCommandArgs & /*a*/) {
+void ConsoleCommands::CmdHelp(const ConsoleCommandArgs& /*a*/)
+{
 	AddLog("Available commands:\n");
-	for (const auto &cmd : Commands)
+	for (const auto& cmd : Commands)
 		AddLog(std::format("\x01{}\t{}\n", cmd.name, cmd.description));
 }
 
 // ── HISTORY ──────────────────────────────────────────────────────────────────
 
-void ConsoleCommands::CmdHistory(const ConsoleCommandArgs & /*a*/) {
+void ConsoleCommands::CmdHistory(const ConsoleCommandArgs& /*a*/)
+{
 	int first = static_cast<int>(History.size()) - 10;
 	for (int i = (first < 0 ? 0 : first); i < static_cast<int>(History.size()); ++i)
 		AddLog(std::format("{:3}: {}\n", i, History.at(static_cast<std::size_t>(i))));
@@ -551,11 +676,12 @@ void ConsoleCommands::CmdHistory(const ConsoleCommandArgs & /*a*/) {
 
 // ── CLEAR ────────────────────────────────────────────────────────────────────
 
-void ConsoleCommands::CmdClear(const ConsoleCommandArgs & /*a*/) { ClearLog(); }
+void ConsoleCommands::CmdClear(const ConsoleCommandArgs& /*a*/) { ClearLog(); }
 
 // ── ECHO ─────────────────────────────────────────────────────────────────────
 
-void ConsoleCommands::CmdEcho(const ConsoleCommandArgs &a) {
+void ConsoleCommands::CmdEcho(const ConsoleCommandArgs& a)
+{
 	if (a.raw_args.empty())
 		AddLog("\n");
 	else
@@ -564,20 +690,22 @@ void ConsoleCommands::CmdEcho(const ConsoleCommandArgs &a) {
 
 // ── FPS ──────────────────────────────────────────────────────────────────────
 
-void ConsoleCommands::CmdFps(const ConsoleCommandArgs & /*a*/) {
-	const ImGuiIO &io = ImGui::GetIO();
+void ConsoleCommands::CmdFps(const ConsoleCommandArgs& /*a*/)
+{
+	const ImGuiIO& io = ImGui::GetIO();
 	AddLog(std::format("{:.1f} FPS  ({:.3f} ms/frame)\n", io.Framerate, 1000.0f / io.Framerate));
 }
 
 // ── STYLE ────────────────────────────────────────────────────────────────────
 
-void ConsoleCommands::CmdStyle(const ConsoleCommandArgs &a) {
+void ConsoleCommands::CmdStyle(const ConsoleCommandArgs& a)
+{
 	if (a.args.empty()) {
 		AddLog("[error] Usage: STYLE DARK|LIGHT|CLASSIC\n");
 		return;
 	}
 	std::string which = a.args.at(0);
-	for (char &c : which)
+	for (char& c : which)
 		c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
 
 	if (which == "DARK") {
@@ -601,13 +729,14 @@ void ConsoleCommands::CmdStyle(const ConsoleCommandArgs &a) {
 
 // ── DEMO ─────────────────────────────────────────────────────────────────────
 
-void ConsoleCommands::CmdDemo(const ConsoleCommandArgs &a) {
+void ConsoleCommands::CmdDemo(const ConsoleCommandArgs& a)
+{
 	if (a.args.empty()) {
 		AddLog("[error] Usage: DEMO ON|OFF\n");
 		return;
 	}
 	std::string which = a.args.at(0);
-	for (char &c : which)
+	for (char& c : which)
 		c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
 
 	if (which == "ON") {
@@ -624,7 +753,8 @@ void ConsoleCommands::CmdDemo(const ConsoleCommandArgs &a) {
 
 // ── LOG ──────────────────────────────────────────────────────────────────────
 
-void ConsoleCommands::CmdLog(const ConsoleCommandArgs &a) {
+void ConsoleCommands::CmdLog(const ConsoleCommandArgs& a)
+{
 	int n = 20;
 	if (!a.args.empty()) {
 		try {
@@ -659,7 +789,8 @@ void ConsoleCommands::CmdLog(const ConsoleCommandArgs &a) {
 
 // ── SET ──────────────────────────────────────────────────────────────────────
 
-void ConsoleCommands::CmdSet(const ConsoleCommandArgs &a) {
+void ConsoleCommands::CmdSet(const ConsoleCommandArgs& a)
+{
 	if (a.args.size() < 2) {
 		AddLog("[error] Usage: SET <name> <value>\n");
 		return;
@@ -676,13 +807,14 @@ void ConsoleCommands::CmdSet(const ConsoleCommandArgs &a) {
 
 // ── GET ──────────────────────────────────────────────────────────────────────
 
-void ConsoleCommands::CmdGet(const ConsoleCommandArgs &a) {
+void ConsoleCommands::CmdGet(const ConsoleCommandArgs& a)
+{
 	if (a.args.empty()) {
 		if (Variables.empty()) {
 			AddLog("(no variables set)\n");
 			return;
 		}
-		for (const auto &[k, v] : Variables)
+		for (const auto& [k, v] : Variables)
 			AddLog(std::format("  {} = {}\n", k, v));
 		return;
 	}
@@ -695,7 +827,8 @@ void ConsoleCommands::CmdGet(const ConsoleCommandArgs &a) {
 
 // ── QUIT ─────────────────────────────────────────────────────────────────────
 
-void ConsoleCommands::CmdQuit(const ConsoleCommandArgs & /*a*/) {
+void ConsoleCommands::CmdQuit(const ConsoleCommandArgs& /*a*/)
+{
 	AddLog("Quitting…\n");
 	if (OnQuit)
 		OnQuit();
@@ -711,7 +844,8 @@ void ConsoleCommands::CmdQuit(const ConsoleCommandArgs & /*a*/) {
 // This is intentionally developer-only — it runs with the same privileges as
 // the parent process.  Do not expose to untrusted input.
 
-void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
+void ConsoleCommands::CmdBash(const ConsoleCommandArgs& a)
+{
 	if (a.raw_args.empty()) {
 		AddLog("[error] Usage: BASH <shell command>\n");
 		return;
@@ -734,7 +868,7 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
 		return;
 	}
 
-	std::array<char, 256> slave_name{};
+	std::array<char, 256> slave_name {};
 	if (ptsname_r(master_fd, slave_name.data(), slave_name.size()) != 0) {
 		close(master_fd);
 		AddLog(std::format("[error] ptsname_r: {}\n", strerror(errno)));
@@ -789,7 +923,7 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
 	// ── Worker thread: read PTY output and detect password prompts
 	// ────────────
 	std::thread worker([this, session, alive, pid]() {
-		std::array<char, 512> buf{};
+		std::array<char, 512> buf {};
 		std::string partial; // accumulates bytes before the next newline
 
 		while (true) {
@@ -801,7 +935,7 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
 				break;
 
 			// Wait up to 50 ms so we can check the alive flag regularly.
-			struct pollfd pfd{fd, POLLIN, 0};
+			struct pollfd pfd { fd, POLLIN, 0 };
 			int ret = poll(&pfd, 1, 50);
 			if (ret < 0) {
 				if (errno == EINTR)
@@ -824,7 +958,7 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
 					partial += buf.at(static_cast<std::size_t>(i));
 
 			// Flush every complete line to the log.
-			size_t pos{};
+			size_t pos {};
 			while ((pos = partial.find('\n')) != std::string::npos) {
 				if (alive->load())
 					AddLogThreadSafe(partial.substr(0, pos) + "\n");
@@ -836,12 +970,9 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
 			// newline.
 			if (!partial.empty() && !session->needs_input.load()) {
 				std::string lower = partial;
-				for (char &c : lower)
+				for (char& c : lower)
 					c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
-				bool looks_like_prompt =
-					(lower.find("password") != std::string::npos ||
-					 lower.find("passphrase") != std::string::npos) &&
-					(partial.back() == ':' || partial.back() == ' ');
+				bool looks_like_prompt = (lower.find("password") != std::string::npos || lower.find("passphrase") != std::string::npos) && (partial.back() == ':' || partial.back() == ' ');
 
 				if (looks_like_prompt && alive->load()) {
 					AddLogThreadSafe(partial + "\n");
@@ -862,11 +993,9 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
 		waitpid(pid, &status, 0);
 		if (alive->load()) {
 			if (WIFEXITED(status) && WEXITSTATUS(status))
-				AddLogThreadSafe("[exit " +
-								 std::to_string(WEXITSTATUS(status)) + "]\n");
+				AddLogThreadSafe("[exit " + std::to_string(WEXITSTATUS(status)) + "]\n");
 			else if (WIFSIGNALED(status))
-				AddLogThreadSafe("[signal " + std::to_string(WTERMSIG(status)) +
-								 "]\n");
+				AddLogThreadSafe("[signal " + std::to_string(WTERMSIG(status)) + "]\n");
 		}
 
 		// Close master fd under lock so the main thread can't write after
@@ -895,7 +1024,8 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs &a) {
 // ── COPILOT
 // ───────────────────────────────────────────────────────────────────
 
-void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs &a) {
+void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs& a)
+{
 	if (a.raw_args.empty()) {
 		AddLog("[error] Usage: COPILOT <question>\n");
 		AddLog("        Runs: gh copilot suggest \"<question>\"\n");
@@ -933,7 +1063,7 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs &a) {
 		return;
 	}
 
-	std::array<char, 256> slave_name{};
+	std::array<char, 256> slave_name {};
 	if (ptsname_r(master_fd, slave_name.data(), slave_name.size()) != 0) {
 		close(master_fd);
 		AddLog(std::format("[error] ptsname_r: {}\n", strerror(errno)));
@@ -980,7 +1110,7 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs &a) {
 	}
 
 	std::thread worker([this, session, alive, pid]() {
-		std::array<char, 512> buf{};
+		std::array<char, 512> buf {};
 		std::string partial;
 
 		while (true) {
@@ -989,7 +1119,7 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs &a) {
 			int fd = session->master_fd.load();
 			if (fd < 0)
 				break;
-			struct pollfd pfd{fd, POLLIN, 0};
+			struct pollfd pfd { fd, POLLIN, 0 };
 			int ret = poll(&pfd, 1, 50);
 			if (ret < 0) {
 				if (errno == EINTR)
@@ -1007,7 +1137,7 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs &a) {
 			for (ssize_t i = 0; i < n; ++i)
 				if (buf.at(static_cast<std::size_t>(i)) != '\r')
 					partial += buf.at(static_cast<std::size_t>(i));
-			size_t pos{};
+			size_t pos {};
 			while ((pos = partial.find('\n')) != std::string::npos) {
 				if (alive->load())
 					AddLogThreadSafe(partial.substr(0, pos) + "\n");
@@ -1025,11 +1155,9 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs &a) {
 				AddLogThreadSafe(
 					"[error] gh not found — install the GitHub CLI\n");
 			else if (WIFEXITED(status) && WEXITSTATUS(status))
-				AddLogThreadSafe("[exit " +
-								 std::to_string(WEXITSTATUS(status)) + "]\n");
+				AddLogThreadSafe("[exit " + std::to_string(WEXITSTATUS(status)) + "]\n");
 			else if (WIFSIGNALED(status))
-				AddLogThreadSafe("[signal " + std::to_string(WTERMSIG(status)) +
-								 "]\n");
+				AddLogThreadSafe("[signal " + std::to_string(WTERMSIG(status)) + "]\n");
 		}
 
 		{
@@ -1054,7 +1182,8 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs &a) {
 // ──────────────────────────────────────────────────────── Strip ANSI/VT100
 // escape sequences so shell prompts appear as plain text.
 
-static std::string StripAnsi(const std::string &in) {
+static std::string StripAnsi(const std::string& in)
+{
 	std::string out;
 	out.reserve(in.size());
 	size_t i = 0;
@@ -1092,7 +1221,7 @@ static std::string StripAnsi(const std::string &in) {
 			} // two-char escape (ESC M, ESC c …)
 		} else if (in.at(i) == '\x07') {
 			++i;
-		}                           // BEL — discard
+		} // BEL — discard
 		else if (in.at(i) == '\x08') // BS — remove last char
 		{
 			if (!out.empty())
@@ -1110,8 +1239,9 @@ static std::string StripAnsi(const std::string &in) {
 // output (including the prompt) is ANSI-stripped and shown in the log.
 // Type 'exit' (or Ctrl+D via the input) to end the session.
 
-void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs & /*a*/) {
-	const char *shell = getenv("SHELL");
+void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs& /*a*/)
+{
+	const char* shell = getenv("SHELL");
 	if (!shell || !*shell)
 		shell = "/bin/bash";
 
@@ -1127,7 +1257,7 @@ void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs & /*a*/) {
 		return;
 	}
 
-	std::array<char, 256> slave_name{};
+	std::array<char, 256> slave_name {};
 	if (ptsname_r(master_fd, slave_name.data(), slave_name.size()) != 0) {
 		close(master_fd);
 		AddLog(std::format("[error] ptsname_r: {}\n", strerror(errno)));
@@ -1185,7 +1315,7 @@ void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs & /*a*/) {
 
 	std::shared_ptr<std::atomic<bool>> alive = Alive_;
 	std::thread worker([this, session, alive, pid]() {
-		std::array<char, 512> buf{};
+		std::array<char, 512> buf {};
 		std::string partial;
 
 		while (true) {
@@ -1195,7 +1325,7 @@ void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs & /*a*/) {
 			if (fd < 0)
 				break;
 
-			struct pollfd pfd{fd, POLLIN, 0};
+			struct pollfd pfd { fd, POLLIN, 0 };
 			int ret = poll(&pfd, 1, 50);
 			if (ret < 0) {
 				if (errno == EINTR)
@@ -1218,7 +1348,7 @@ void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs & /*a*/) {
 					partial += buf.at(static_cast<std::size_t>(i));
 
 			// Flush complete lines.
-			size_t pos{};
+			size_t pos {};
 			while ((pos = partial.find('\n')) != std::string::npos) {
 				if (alive->load())
 					AddLogThreadSafe(StripAnsi(partial.substr(0, pos)) + "\n");

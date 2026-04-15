@@ -1,11 +1,15 @@
 // Dear ImGui: standalone example application for SDL3 + Vulkan
 // Learn about Dear ImGui: https://dearimgui.com/getting-started
 
-#include "imgui_layer.hpp"
-#include "sdl_window.hpp"
-#include "test_engine_layer.hpp"
-#include "vulkan_context.hpp"
+#include "app/ui/imgui_layer.hpp"
+#include "app/platform/sdl_window.hpp"
+#include "app/ui/test_engine_layer.hpp"
+#include "app/renderer/vulkan/vulkan_emoji_atlas.hpp"
+#include "app/renderer/vulkan/vulkan_context.hpp"
 #include <SDL3/SDL.h>
+
+#include <print>
+#include <vector>
 
 #ifdef __EMSCRIPTEN__
 #include "../libs/emscripten/emscripten_mainloop_stub.h"
@@ -33,8 +37,26 @@ int main(int, char**)
 
 	// ── ImGui ─────────────────────────────────────────────────────────────────
 	ImGui_ImplVulkan_InitInfo init_info = vulkan.MakeInitInfo();
+	VulkanEmojiAtlas emoji_atlas(vulkan);
 	ImGuiLayer imgui;
 	imgui.Init(sdl.Window, init_info, sdl.MainScale);
+	const std::vector<ImWchar> emoji_codepoints {
+		static_cast<ImWchar>(0x1F31F),
+		static_cast<ImWchar>(0x1F680),
+	};
+	const std::vector<std::string> emoji_sequences {
+		"👨‍👩‍👧‍👦", "🏳️‍🌈", "👩🏾‍🚀", "🧑🏻‍🤝‍🧑🏿", "🧗🏻‍♂️", "🚵‍♀️", "🧜‍♂️",
+		"🧟‍♀️", "🧚‍♂️", "🧛🏾‍♂️", "🦹‍♂️", "🧝‍♀️", "🧙‍♂️", "🧞‍♂️", "🧖‍♂️",
+		"🛀🏿", "🧘🏽‍♀️", "🏃‍♂️", "🏃‍♀️", "👯‍♂️", "💃🏽", "🕺🏻", "🏇🏿",
+		"🧗🏼‍♂️", "🚴‍♂️", "🤽🏼‍♀️", "🤾‍♂️", "🤹🏿‍♂️",
+	};
+	if (emoji_atlas.Build("/usr/share/fonts/google-noto-color-emoji-fonts/Noto-COLRv1.ttf",
+			32.0f, emoji_codepoints, emoji_sequences)) {
+		emoji_atlas.DumpAtlasToPng("/tmp/emoji_atlas_vulkan.png");
+		imgui.SetEmojiAtlas(&emoji_atlas);
+	} else {
+		std::println(stderr, "[main] Vulkan emoji atlas build failed");
+	}
 
 	TestEngineLayer test_engine;
 	test_engine.Init();
@@ -42,7 +64,7 @@ int main(int, char**)
 	// ── Main loop ─────────────────────────────────────────────────────────────
 	bool done = false;
 	while (!done) {
-		sdl.PollEvents(done, &imgui);
+		sdl.PollEvents(done, [&](const SDL_Event* event) { imgui.ProcessEvent(event); });
 		done = done || imgui.RequestQuit;
 		if (sdl.IsMinimized()) {
 			SDL_Delay(10);
@@ -69,6 +91,8 @@ int main(int, char**)
 	// ── Cleanup ───────────────────────────────────────────────────────────────
 	vulkan.WaitIdle();
 	test_engine.Stop();
+	imgui.SetEmojiAtlas(nullptr);
+	emoji_atlas.Cleanup();
 	imgui.Shutdown();
 	test_engine.Shutdown();
 	vulkan.CleanupWindow();

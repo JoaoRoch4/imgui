@@ -31,6 +31,8 @@ The SDL3 + Vulkan example has been refactored from a single flat `main.cpp` into
 | `imgui_debug_log_mirror.hpp` | Realtime mirror of the ImGui debug log to a file |
 | `test_engine_layer.cpp/.hpp` | imgui_test_engine integration (optional) |
 
+See [`examples/example_sdl3_vulkan/CLASS_DIAGRAM.md`](examples/example_sdl3_vulkan/CLASS_DIAGRAM.md) for the commented overview and [`examples/example_sdl3_vulkan/CLASS_DIAGRAM.mmd`](examples/example_sdl3_vulkan/CLASS_DIAGRAM.mmd) for the standalone Mermaid diagram source.
+
 ### Multi-tab Terminal (`ImGuiLayer` + `ImGuiConsole`)
 
 The **Terminals** window hosts any number of independent terminal tabs, each with its own:

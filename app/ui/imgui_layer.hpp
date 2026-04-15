@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+class EmojiAtlas;
+
 // ImGuiLayer owns the Dear ImGui context, both backends, and all UI window logic.
 class ImGuiLayer
 {
@@ -22,6 +24,7 @@ public:
     bool   ShowDebugLogMirrorWindow;
     bool   ShowTerminalWindow;
     bool   ShowTestEngineWindow;
+    bool   ShowEmojiAtlasWindow;
     bool   RequestQuit;
     ImVec4 ClearColor;
 
@@ -56,10 +59,16 @@ public:
     // Build all UI windows for the current frame.
     void BuildUI();
 
+    // Non-owning pointer to a backend-specific emoji atlas created by the app.
+    void SetEmojiAtlas(const EmojiAtlas* atlas);
+
     // Call ImGui::Render() to finalise draw data.
     void Render();
 
 private:
     void WireTerminalCallbacks(ConsoleCommands& c);
     void DrawTerminals();
+    void DrawEmojiAtlasWindow();
+
+    const EmojiAtlas* EmojiAtlasView { nullptr };
 };

@@ -76,3 +76,19 @@ examples/example_sdl3_opengl3/example_sdl3_opengl3
 examples/example_sdl3_sdlgpu3/example_sdl3_sdlgpu3
 examples/example_sdl3_sdlrenderer3/example_sdl3_sdlrenderer3
 examples/example_sdl3_vulkan/example_sdl3_vulkan
+
+## Local project artifacts (Project_sdl3_vulkan)
+Project_sdl3_vulkan/build/
+Project_sdl3_vulkan/CMakeFiles/
+Project_sdl3_vulkan/CMakeCache.txt
+Project_sdl3_vulkan/cmake_install.cmake
+Project_sdl3_vulkan/compile_commands.json
+Project_sdl3_vulkan/Makefile
+Project_sdl3_vulkan/imgui.ini
+Project_sdl3_vulkan/window_state.toml
+Project_sdl3_vulkan/vcpkg_installed/
+Project_sdl3_vulkan/.cache/
+Project_sdl3_vulkan/.cmake/
+*.vcxproj
+*.filters
+*.ttf

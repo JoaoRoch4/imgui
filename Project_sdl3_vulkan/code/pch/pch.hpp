@@ -52,3 +52,5 @@
 #include <mpv/render.h>
 
 #include <SDL3/SDL_vulkan.h>
+
+#include <webp/decode.h>

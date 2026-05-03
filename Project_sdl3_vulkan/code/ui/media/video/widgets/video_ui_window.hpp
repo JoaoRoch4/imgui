@@ -6,6 +6,7 @@
 
 #include "imgui.h"
 
+#include <SDL3/SDL_stdinc.h>
 #include <mpv/client.h>
 #include <vulkan/vulkan.h>
 
@@ -56,6 +57,9 @@ public:
         std::function<bool(const std::string &)> is_startup_video_fixed;
         std::function<void(int)> on_switch_relative;
     };
+
+    Uint64 seek_seconds_button_foward = 5;
+    int32_t seek_seconds_button_backward = -5;
 
     void draw(State state, const Callbacks &callbacks) const;
 };

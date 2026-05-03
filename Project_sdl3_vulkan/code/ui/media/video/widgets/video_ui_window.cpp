@@ -319,7 +319,7 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
 
     ImGui::SameLine(0.0f, 4.0f);
     if (ImGui::SmallButton("<<"))
-        seek_by(-10);
+        seek_by(seek_seconds_button_backward);
 
     ImGui::SameLine(0.0f, 4.0f);
     if (ImGui::SmallButton(paused ? "|>" : "||"))
@@ -327,7 +327,7 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
 
     ImGui::SameLine(0.0f, 4.0f);
     if (ImGui::SmallButton(">>"))
-        seek_by(10);
+        seek_by(seek_seconds_button_foward);
 
     ImGui::SameLine(0.0f, 4.0f);
     const bool loop_style_pushed = state.loop;

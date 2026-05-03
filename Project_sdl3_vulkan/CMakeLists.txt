@@ -122,7 +122,7 @@ add_executable(example_sdl3_vulkan
 # Compiles once per build type; all project .cpp files reuse it.
 # Only covers stable, frequently-included headers — not rapidly-changing ones.
 target_precompile_headers(example_sdl3_vulkan PRIVATE
-    code/pch.hpp
+    code/pch/pch.hpp
 )
 
 # ── Include directories ───────────────────────────────────────────────────────
@@ -137,6 +137,7 @@ target_include_directories(example_sdl3_vulkan PRIVATE
     # without path prefixes from anywhere in the project)
     ${CMAKE_CURRENT_SOURCE_DIR}/code
     ${CMAKE_CURRENT_SOURCE_DIR}/code/main
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/pch
     ${CMAKE_CURRENT_SOURCE_DIR}/code/core
     ${CMAKE_CURRENT_SOURCE_DIR}/code/core/thread
     ${CMAKE_CURRENT_SOURCE_DIR}/code/core/log

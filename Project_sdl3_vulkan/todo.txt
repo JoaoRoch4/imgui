@@ -1,0 +1,8 @@
+file rename
+edit file metadata
+restart all theads
+download in osd
+download percentage
+loop and acelleration on runtime configs
+fix loop button
+cuda hwdec

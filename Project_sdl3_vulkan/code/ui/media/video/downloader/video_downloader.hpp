@@ -1,0 +1,88 @@
+#pragma once
+
+
+struct mpv_handle;
+
+/// Downloads online video/audio URLs to a local disk cache using the libmpv
+/// stream layer (yt-dlp is used internally for YouTube, Vimeo, Twitch, etc.).
+///
+/// One background jthread drains a FIFO queue of pending jobs.
+/// Cache filenames are stable FNV-1a hashes of the URL — a given URL is never
+/// downloaded more than once.
+///
+/// Usage:
+///   1. Call set_cache_dir() once at startup to set the storage directory and
+///      start the worker thread.
+///   2. Call get_or_enqueue() when the user opens a video URL.
+///      - Returns the cached path immediately if a complete file already exists.
+///      - Otherwise enqueues a background download and returns std::nullopt.
+///   3. Call take_completed() each frame to collect finished downloads.
+///   4. Call shutdown() before destroying the object (also called by destructor).
+class VideoDownloader {
+public:
+    struct Result {
+        std::string           url;
+        std::filesystem::path cached_path; ///< Valid only when ok == true.
+        bool                  ok;
+    };
+
+    VideoDownloader();
+    ~VideoDownloader();
+
+    VideoDownloader(const VideoDownloader &) = delete;
+    VideoDownloader &operator=(const VideoDownloader &) = delete;
+
+    /// Set cache directory and start the worker thread.
+    /// Creating the directory is handled internally.
+    void set_cache_dir(const std::filesystem::path &dir);
+
+    /// If a complete cached copy of the URL already exists on disk, return its
+    /// path immediately.  Otherwise enqueue a background download (idempotent —
+    /// calling again for an already-queued URL is a no-op) and return nullopt.
+    [[nodiscard]] std::optional<std::filesystem::path> get_or_enqueue(const std::string &url);
+
+    /// Drain and return all downloads completed since the last call.
+    std::vector<Result> take_completed();
+
+    /// Returns the number of bytes written to disk so far for @p url if it is
+    /// currently queued or downloading.  Returns 0 if the URL is not in-flight.
+    [[nodiscard]] uint64_t bytes_inflight(const std::string &url) const;
+
+    /// Cancel active/queued downloads and remove cached files from disk.
+    void clear_cache();
+
+    /// Cancel any in-progress download and stop the worker thread.
+    void shutdown();
+
+private:
+    struct Job {
+        std::string           url;
+        std::filesystem::path target;
+    };
+
+    void worker(std::stop_token st);
+    void start_worker_thread();
+    void stop_worker_thread(bool unregister_watch);
+    [[nodiscard]] std::filesystem::path cache_path_for(const std::string &url) const;
+
+    /// Download url to target via an mpv_handle with stream-dump.
+    /// Cleans up the partial file on failure.
+    /// Passes st so the worker can cancel mid-download.
+    static bool download(const std::string &url,
+                         const std::filesystem::path &target,
+                         const std::stop_token &st,
+                         std::atomic<mpv_handle *> &current_out,
+                         std::atomic<uint64_t> &watch_id_ref);
+
+    static uint64_t fnv1a(const std::string &s);
+
+    std::filesystem::path     m_cache_dir;
+    std::jthread              m_worker;
+    std::mutex                m_mutex;
+    std::condition_variable   m_cv;
+    std::vector<Job>          m_queue;
+    std::vector<Result>       m_completed;
+    std::vector<std::string>  m_inflight; ///< URLs queued or currently downloading.
+    std::atomic<mpv_handle *> m_current_mpv;
+    std::atomic<uint64_t>     m_worker_watch_id;
+};

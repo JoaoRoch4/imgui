@@ -11410,7 +11410,8 @@ struct ExampleAssetsBrowser
                     // Manipulate scroll to that we will land at the same Y location of currently hovered item.
                     // - Calculate next frame position of item under mouse
                     // - Set new scroll position to be used in next ImGui::BeginChild() call.
-                    float hovered_item_rel_pos_y = ((float)(hovered_item_idx / LayoutColumnCount) + fmodf(hovered_item_ny, 1.0f)) * LayoutItemStep.y;
+                    float div = (hovered_item_idx / LayoutColumnCount); // NOLINT
+                    float hovered_item_rel_pos_y = (div + fmodf(hovered_item_ny, 1.0f)) * LayoutItemStep.y;
                     hovered_item_rel_pos_y += ImGui::GetStyle().WindowPadding.y;
                     float mouse_local_y = io.MousePos.y - ImGui::GetWindowPos().y;
                     ImGui::SetScrollY(hovered_item_rel_pos_y - mouse_local_y);

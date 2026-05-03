@@ -1,8 +1,7 @@
+#include "pch.hpp"
+
 #include "app.hpp"
 
-#include <imgui_internal.h>
-#include <imgui_impl_sdl3.h>
-#include <implot.h>
 
 #include "imgui_context.hpp"
 #include "fps_plot.hpp"
@@ -11,9 +10,6 @@
 #include "main_menu_bar.hpp"
 #include "style_editor.hpp"
 #include "window_state_toml.hpp"
-
-#include <SDL3/SDL_mouse.h>
-#include <SDL3/SDL_vulkan.h>
 
 
 App::App()

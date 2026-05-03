@@ -1,3 +1,6 @@
+#include "pch.hpp"
+
+
 #include "open_image_dialogs.hpp"
 
 
@@ -33,7 +36,7 @@ void OpenImageDialogs::begin_open_image_dialog()
                            filters, 5, nullptr, true);
 }
 
-void OpenImageDialogs::open_online_popup()
+void OpenImageDialogs::open_url_popup()
 {
     m_url_buf[0] = '\0';
     m_show_url_popup = true;

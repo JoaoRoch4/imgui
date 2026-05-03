@@ -1,16 +1,14 @@
 #include "video_downloader.hpp"
 #include "core/log/debug_log.hpp"
 #include "core/thread/thread_overwatch.hpp"
-
+#include "pch.hpp"
 #include <mpv/client.h>
 
-
-// ============================================================================
+// ---------------------------------------------------------------------------
 // Helpers
-// ============================================================================
+// ---------------------------------------------------------------------------
 
-uint64_t VideoDownloader::fnv1a(const std::string &s)
-{
+uint64_t VideoDownloader::fnv1a(const std::string &s) {
     uint64_t h = 14695981039346656037ULL;
     for (const unsigned char c : s) {
         h ^= c;
@@ -19,17 +17,16 @@ uint64_t VideoDownloader::fnv1a(const std::string &s)
     return h;
 }
 
-std::filesystem::path VideoDownloader::cache_path_for(const std::string &url) const
-{
+std::filesystem::path VideoDownloader::cache_path_for(const std::string &url) const {
     char hex[17];
     std::snprintf(hex, sizeof(hex), "%016llx",
                   static_cast<unsigned long long>(fnv1a(url)));
     return m_cache_dir / (std::string(hex) + ".mp4");
 }
 
-// ============================================================================
-// Constructor / destructor
-// ============================================================================
+// ---------------------------------------------------------------------------
+// Construction / destruction
+// ---------------------------------------------------------------------------
 
 VideoDownloader::VideoDownloader()
     : m_cache_dir{}
@@ -40,21 +37,17 @@ VideoDownloader::VideoDownloader()
     , m_completed{}
     , m_inflight{}
     , m_current_mpv{nullptr}
-    , m_worker_watch_id{0}
-{
-}
+    , m_worker_watch_id{0} {}
 
-VideoDownloader::~VideoDownloader()
-{
+VideoDownloader::~VideoDownloader() {
     shutdown();
 }
 
-// ============================================================================
+// ---------------------------------------------------------------------------
 // Lifecycle
-// ============================================================================
+// ---------------------------------------------------------------------------
 
-void VideoDownloader::set_cache_dir(const std::filesystem::path &dir)
-{
+void VideoDownloader::set_cache_dir(const std::filesystem::path &dir) {
     m_cache_dir = dir;
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
@@ -62,36 +55,33 @@ void VideoDownloader::set_cache_dir(const std::filesystem::path &dir)
     start_worker_thread();
 }
 
-void VideoDownloader::shutdown()
-{
+void VideoDownloader::shutdown() {
     stop_worker_thread(true);
 }
 
-void VideoDownloader::start_worker_thread()
-{
+void VideoDownloader::start_worker_thread() {
     if (m_worker.joinable())
         return;
 
-    m_worker = std::jthread{[this](std::stop_token st) { worker(st); }};
+    // Register watch FIRST so the thread captures a valid, non-zero ID on its
+    // very first heartbeat call. KillOnly: no automatic restart loop.
+    const uint64_t watch_id = ThreadOverwatch::instance().watch(
+        "VideoDownloader::worker",
+        std::chrono::milliseconds(5000),
+        [this]() { stop_worker_thread(false); },
+        nullptr,
+        ThreadOverwatch::RecoveryPolicy::KillOnly);
 
-    if (m_worker_watch_id.load(std::memory_order_acquire) == 0) {
-        const auto watch_id = ThreadOverwatch::instance().watch(
-            "VideoDownloader::worker",
-            std::chrono::milliseconds(5000),
-            [this]() { stop_worker_thread(false); },
-            [this]() {
-                if (!m_cache_dir.empty())
-                    start_worker_thread();
-            });
-        m_worker_watch_id.store(watch_id, std::memory_order_release);
-    }
+    m_worker_watch_id.store(watch_id, std::memory_order_release);
 
-    ThreadOverwatch::instance().heartbeat(
-        m_worker_watch_id.load(std::memory_order_acquire));
+    // Capture watch_id by value — thread always uses the correct ID.
+    m_worker = std::jthread([this, watch_id](std::stop_token st) {
+        worker_loop(std::move(st), watch_id);
+    });
 }
 
-void VideoDownloader::stop_worker_thread(bool unregister_watch)
-{
+void VideoDownloader::stop_worker_thread(bool unregister_watch) {
+    // Unregister BEFORE joining so overwatch doesn't fire on an intentional stop.
     if (unregister_watch) {
         const uint64_t watch_id = m_worker_watch_id.exchange(0, std::memory_order_acq_rel);
         ThreadOverwatch::instance().unwatch(watch_id);
@@ -103,7 +93,7 @@ void VideoDownloader::stop_worker_thread(bool unregister_watch)
     m_worker.request_stop();
     m_cv.notify_all();
 
-    // Interrupt any mpv instance currently blocking in mpv_wait_event
+    // Interrupt any mpv instance currently blocking in mpv_wait_event.
     mpv_handle *mpv = m_current_mpv.load(std::memory_order_acquire);
     if (mpv)
         mpv_command_string(mpv, "quit");
@@ -111,26 +101,26 @@ void VideoDownloader::stop_worker_thread(bool unregister_watch)
     m_worker.join();
 }
 
-// ============================================================================
+// ---------------------------------------------------------------------------
 // Public API
-// ============================================================================
+// ---------------------------------------------------------------------------
 
-std::optional<std::filesystem::path> VideoDownloader::get_or_enqueue(const std::string &url)
-{
+std::optional<std::filesystem::path>
+VideoDownloader::get_or_enqueue(const std::string &url) {
     if (m_cache_dir.empty())
         return std::nullopt;
 
     const auto path = cache_path_for(url);
 
-    // Return cached file immediately if it exists and is non-empty
+    // Return cached file immediately if it exists and is non-empty.
     std::error_code ec;
-    if (std::filesystem::exists(path, ec) && std::filesystem::file_size(path, ec) > 0) {
+    if (std::filesystem::exists(path, ec) &&
+        std::filesystem::file_size(path, ec) > 0) {
         APP_DEBUG_LOG("[VideoDownloader] cache hit: {}", path.string());
-        std::filesystem::path absolute = std::filesystem::absolute(path, ec);
-        return absolute;
+        return std::filesystem::absolute(path, ec);
     }
 
-    // Enqueue if not already in-flight
+    // Enqueue if not already in-flight.
     std::lock_guard lock{m_mutex};
     const bool already =
         std::any_of(m_inflight.begin(), m_inflight.end(),
@@ -144,38 +134,34 @@ std::optional<std::filesystem::path> VideoDownloader::get_or_enqueue(const std::
     return std::nullopt;
 }
 
-std::vector<VideoDownloader::Result> VideoDownloader::take_completed()
-{
+std::vector<VideoDownloader::Result> VideoDownloader::take_completed() {
     std::lock_guard lock{m_mutex};
     return std::exchange(m_completed, {});
 }
 
-uint64_t VideoDownloader::bytes_inflight(const std::string &url) const
-{
-    std::lock_guard lock{const_cast<std::mutex &>(m_mutex)};
+uint64_t VideoDownloader::bytes_inflight(const std::string &url) const {
+    std::lock_guard lock{m_mutex};
     const bool in_flight =
         std::any_of(m_inflight.begin(), m_inflight.end(),
                     [&url](const std::string &u) { return u == url; });
     if (!in_flight)
         return 0;
+
     std::error_code ec;
-    const auto path = cache_path_for(url);
-    const auto sz = std::filesystem::file_size(path, ec);
+    const auto sz = std::filesystem::file_size(cache_path_for(url), ec);
     return ec ? 0 : sz;
 }
 
-void VideoDownloader::clear_cache()
-{
+void VideoDownloader::clear_cache() {
     if (m_cache_dir.empty())
         return;
 
-    // Stop current transfer so its target file is cleaned up by download().
+    // Interrupt any active download.
     mpv_handle *mpv = m_current_mpv.load(std::memory_order_acquire);
     if (mpv)
         mpv_command_string(mpv, "quit");
 
     {
-        // Drop queued/inflight bookkeeping so old jobs do not reappear.
         std::lock_guard lock{m_mutex};
         m_queue.clear();
         m_inflight.clear();
@@ -183,60 +169,55 @@ void VideoDownloader::clear_cache()
     }
 
     std::error_code ec;
-    std::vector<std::filesystem::path> files;
     for (const auto &entry : std::filesystem::recursive_directory_iterator(
-             m_cache_dir, std::filesystem::directory_options::skip_permission_denied, ec)) {
+             m_cache_dir,
+             std::filesystem::directory_options::skip_permission_denied, ec)) {
         if (entry.is_regular_file(ec))
-            files.push_back(entry.path());
+            std::filesystem::remove(entry.path(), ec);
     }
-    for (const auto &path : files)
-        std::filesystem::remove(path, ec);
 }
 
-// ============================================================================
-// Download implementation (runs on worker thread)
-// ============================================================================
+// ---------------------------------------------------------------------------
+// Download (runs on worker thread)
+// ---------------------------------------------------------------------------
 
 bool VideoDownloader::download(const std::string &url,
                                const std::filesystem::path &target,
                                const std::stop_token &st,
-                               std::atomic<mpv_handle *> &current_out,
-                               std::atomic<uint64_t> &watch_id_ref)
-{
+                               uint64_t watch_id) {
     mpv_handle *mpv = mpv_create();
     if (!mpv)
         return false;
 
-    current_out.store(mpv, std::memory_order_release);
+    m_current_mpv.store(mpv, std::memory_order_release);
 
-    // Silent operation — no terminal output, no video/audio rendering
-    mpv_set_option_string(mpv, "terminal",     "no");
+    // Silent operation — no terminal output, no video/audio rendering.
+    mpv_set_option_string(mpv, "terminal", "no");
     mpv_set_option_string(mpv, "really-quiet", "yes");
-    mpv_set_option_string(mpv, "vid",          "no");
-    mpv_set_option_string(mpv, "aid",          "no");
+    mpv_set_option_string(mpv, "vid", "no");
+    mpv_set_option_string(mpv, "aid", "no");
 
-    // yt-dlp integration for streaming sites
-    mpv_set_option_string(mpv, "ytdl",        "yes");
-    // Prefer a single-file format (no separate video+audio merge) so that
-    // stream-dump produces one complete, playable file.
+    // yt-dlp integration for streaming sites.
+    mpv_set_option_string(mpv, "ytdl", "yes");
+    // Prefer a single-file format so stream-dump produces one complete file.
     mpv_set_option_string(mpv, "ytdl-format",
                           "best[ext=mp4][height<=1080]"
                           "/best[height<=1080]"
                           "/best");
 
-    // Write raw stream bytes to the target path
+    // Write raw stream bytes to the target path.
     mpv_set_option_string(mpv, "stream-dump", target.string().c_str());
     APP_DEBUG_LOG("[VideoDownloader] download start: {} -> {}", url, target.string());
 
     if (mpv_initialize(mpv) < 0) {
-        current_out.store(nullptr, std::memory_order_release);
+        m_current_mpv.store(nullptr, std::memory_order_release);
         mpv_terminate_destroy(mpv);
         return false;
     }
 
     const char *cmd[] = {"loadfile", url.c_str(), nullptr};
     if (mpv_command(mpv, cmd) < 0) {
-        current_out.store(nullptr, std::memory_order_release);
+        m_current_mpv.store(nullptr, std::memory_order_release);
         mpv_terminate_destroy(mpv);
         return false;
     }
@@ -247,22 +228,19 @@ bool VideoDownloader::download(const std::string &url,
             mpv_command_string(mpv, "quit");
 
         mpv_event *ev = mpv_wait_event(mpv, 0.5);
-        ThreadOverwatch::instance().heartbeat(watch_id_ref.load(std::memory_order_acquire));
-        if (!ev)
-            break;
+        ThreadOverwatch::instance().heartbeat(watch_id);
 
-        if (ev->event_id == MPV_EVENT_SHUTDOWN)
+        if (!ev || ev->event_id == MPV_EVENT_SHUTDOWN)
             break;
 
         if (ev->event_id == MPV_EVENT_END_FILE) {
             const auto *edata = static_cast<const mpv_event_end_file *>(ev->data);
-            success = (edata->reason == MPV_END_FILE_REASON_EOF) &&
-                      !st.stop_requested();
+            success = (edata->reason == MPV_END_FILE_REASON_EOF) && !st.stop_requested();
             break;
         }
     }
 
-    current_out.store(nullptr, std::memory_order_release);
+    m_current_mpv.store(nullptr, std::memory_order_release);
     mpv_terminate_destroy(mpv);
 
     if (!success) {
@@ -276,14 +254,14 @@ bool VideoDownloader::download(const std::string &url,
     return success;
 }
 
-// ============================================================================
-// Worker thread
-// ============================================================================
+// ---------------------------------------------------------------------------
+// Worker loop
+// ---------------------------------------------------------------------------
 
-void VideoDownloader::worker(std::stop_token st)
-{
+void VideoDownloader::worker_loop(std::stop_token st, uint64_t watch_id) {
+    APP_DEBUG_LOG("[VideoDownloader] worker started (watch_id={})", watch_id);
+
     for (;;) {
-        const uint64_t watch_id = m_worker_watch_id.load(std::memory_order_acquire);
         ThreadOverwatch::instance().heartbeat(watch_id);
 
         Job job;
@@ -293,6 +271,7 @@ void VideoDownloader::worker(std::stop_token st)
                 return st.stop_requested() || !m_queue.empty();
             });
 
+            // Heartbeat after waking — wait_for can hold for up to 500 ms.
             ThreadOverwatch::instance().heartbeat(watch_id);
 
             if (st.stop_requested())
@@ -306,19 +285,24 @@ void VideoDownloader::worker(std::stop_token st)
         }
 
         APP_DEBUG_LOG("[VideoDownloader] worker: picked up job: {}", job.url);
-        const bool ok = download(job.url, job.target, st, m_current_mpv, m_worker_watch_id);
-
-        Result result{job.url, ok ? job.target : std::filesystem::path{}, ok};
+        const bool ok = download(job.url, job.target, st, watch_id);
 
         {
             std::lock_guard lock{m_mutex};
             m_inflight.erase(
                 std::remove(m_inflight.begin(), m_inflight.end(), job.url),
                 m_inflight.end());
+            m_completed.push_back({job.url, ok ? job.target : std::filesystem::path{}, ok});
             APP_DEBUG_LOG("[VideoDownloader] worker: completed (ok={}) {}", ok, job.url);
-            m_completed.push_back(std::move(result));
         }
 
         ThreadOverwatch::instance().heartbeat(watch_id);
     }
+
+    // Clear watch ID if it still belongs to this thread.
+    const uint64_t current = m_worker_watch_id.load(std::memory_order_acquire);
+    if (current == watch_id)
+        m_worker_watch_id.store(0, std::memory_order_release);
+
+    APP_DEBUG_LOG("[VideoDownloader] worker stopped (watch_id={})", watch_id);
 }

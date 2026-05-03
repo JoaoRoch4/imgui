@@ -1,8 +1,7 @@
+#include "pch.hpp"
+
 #include "vulkan_context.hpp"
-#include "core/log/debug_log.hpp"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include "debug_log.hpp"
 
 #ifdef IMGUI_IMPL_VULKAN_USE_VOLK
 #define VOLK_IMPLEMENTATION

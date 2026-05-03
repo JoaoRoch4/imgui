@@ -1,6 +1,9 @@
+#include "pch.hpp"
+
+
 #include "fps_plot.hpp"
 
-#include <implot.h>
+
 
 
 FpsPlot::FpsPlot()

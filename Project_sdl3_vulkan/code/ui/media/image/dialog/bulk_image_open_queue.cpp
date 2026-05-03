@@ -1,6 +1,9 @@
 #include "bulk_image_open_queue.hpp"
 #include "core/thread/thread_overwatch.hpp"
 
+// ---------------------------------------------------------------------------
+// Construction
+// ---------------------------------------------------------------------------
 
 BulkImageOpenQueue::BulkImageOpenQueue()
     : m_worker{}
@@ -8,19 +11,20 @@ BulkImageOpenQueue::BulkImageOpenQueue()
     , m_ready_paths{}
     , m_active_paths{}
     , m_worker_watch_id{0}
-{
-}
+{}
 
-void BulkImageOpenQueue::enqueue_batch(const std::vector<std::string>& paths)
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+void BulkImageOpenQueue::enqueue_batch(const std::vector<std::string> &paths)
 {
     stop_worker_thread(true);
-
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_ready_paths.clear();
         m_active_paths = paths;
     }
-
     start_worker_thread(paths);
 }
 
@@ -47,13 +51,32 @@ void BulkImageOpenQueue::shutdown()
     m_active_paths.clear();
 }
 
+// ---------------------------------------------------------------------------
+// Private
+// ---------------------------------------------------------------------------
+
 void BulkImageOpenQueue::start_worker_thread(const std::vector<std::string> &paths)
 {
     if (m_worker.joinable())
         return;
 
-    m_worker = std::jthread([this, paths](const std::stop_token& stoken) {
-        const uint64_t watch_id = m_worker_watch_id.load(std::memory_order_acquire);
+    // Register watch BEFORE launching the thread so the thread captures a
+    // valid, non-zero ID on its very first heartbeat call.
+    // Policy: KillOnly — if the worker hangs, kill it and remove the watch.
+    // No automatic restart loop.
+    const uint64_t watch_id = ThreadOverwatch::instance().watch(
+        "BulkImageOpenQueue::worker",
+        std::chrono::milliseconds(5000),
+        [this]() { stop_worker_thread(false); }, // kill: stop thread, leave watch for cleanup
+        nullptr,                                  // no restart
+        ThreadOverwatch::RecoveryPolicy::KillOnly
+    );
+
+    m_worker_watch_id.store(watch_id, std::memory_order_release);
+
+    // Capture watch_id and paths by value — the thread owns its own copies.
+    m_worker = std::jthread([this, watch_id, paths](const std::stop_token &stoken) {
+
         ThreadOverwatch::instance().heartbeat(watch_id);
 
         std::deque<std::string> validated;
@@ -64,46 +87,32 @@ void BulkImageOpenQueue::start_worker_thread(const std::vector<std::string> &pat
             if (std::filesystem::exists(path))
                 validated.push_back(path);
 
+            // Heartbeat every iteration — filesystem::exists can block on
+            // network mounts and slow drives.
             ThreadOverwatch::instance().heartbeat(watch_id);
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
 
-        {
+        if (!stoken.stop_requested()) {
             std::lock_guard<std::mutex> lock(m_mutex);
-            for (auto &path : validated)
-                m_ready_paths.push_back(path);
+            for (auto &p : validated)
+                m_ready_paths.push_back(p);
             m_active_paths.clear();
         }
 
-        ThreadOverwatch::instance().heartbeat(watch_id);
-
-        ThreadOverwatch::instance().unwatch(watch_id);
-        m_worker_watch_id.store(0, std::memory_order_release);
+        // Only clear the watch ID if it still belongs to this thread.
+        // (KillOnly policy removes the watch entry from overwatch automatically,
+        // so we just zero the atomic here for cleanliness.)
+        const uint64_t current = m_worker_watch_id.load(std::memory_order_acquire);
+        if (current == watch_id)
+            m_worker_watch_id.store(0, std::memory_order_release);
     });
-
-    if (m_worker_watch_id.load(std::memory_order_acquire) == 0) {
-        const auto watch_id = ThreadOverwatch::instance().watch(
-            "BulkImageOpenQueue::worker",
-            std::chrono::milliseconds(5000),
-            [this]() { stop_worker_thread(false); },
-            [this]() {
-                std::vector<std::string> paths;
-                {
-                    std::lock_guard<std::mutex> lock(m_mutex);
-                    paths = m_active_paths;
-                }
-                if (!paths.empty())
-                    start_worker_thread(paths);
-            });
-        m_worker_watch_id.store(watch_id, std::memory_order_release);
-    }
-
-    ThreadOverwatch::instance().heartbeat(
-        m_worker_watch_id.load(std::memory_order_acquire));
 }
 
 void BulkImageOpenQueue::stop_worker_thread(bool unregister_watch)
 {
+    // Unregister BEFORE joining so overwatch doesn't fire on a thread
+    // we are intentionally stopping.
     if (unregister_watch) {
         const uint64_t watch_id = m_worker_watch_id.exchange(0, std::memory_order_acq_rel);
         ThreadOverwatch::instance().unwatch(watch_id);

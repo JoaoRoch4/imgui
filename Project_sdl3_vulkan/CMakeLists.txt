@@ -51,7 +51,6 @@ add_executable(example_sdl3_vulkan
 
     # Core utilities
     code/core/thread/thread_overwatch.cpp
-
     # Rendering layer (SDL3 window + ImGui + Vulkan backend)
     code/rendering/sdl3_context.cpp
     code/rendering/imgui_context.cpp
@@ -62,7 +61,6 @@ add_executable(example_sdl3_vulkan
 
     # UI — top-level window widgets
     code/ui/window/widgets/main_menu_bar.cpp
-    code/ui/window/widgets/Image_viewer_panel.cpp
 
     # UI — file history
     code/ui/window/widgets/history/history_context_menu.cpp
@@ -90,6 +88,7 @@ add_executable(example_sdl3_vulkan
     code/ui/media/image/downloader/image_downloader.cpp
     code/ui/media/image/dialog/bulk_image_open_queue.cpp
     code/ui/media/image/dialog/open_image_dialogs.cpp
+    code/ui/media/image/widgets/Image_viewer_panel.cpp
 
     # UI — video subsystem
     code/ui/media/video/player/video_player.cpp
@@ -139,6 +138,7 @@ target_include_directories(example_sdl3_vulkan PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/code
     ${CMAKE_CURRENT_SOURCE_DIR}/code/main
     ${CMAKE_CURRENT_SOURCE_DIR}/code/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/core/thread
     ${CMAKE_CURRENT_SOURCE_DIR}/code/core/log
     ${CMAKE_CURRENT_SOURCE_DIR}/code/rendering
     ${CMAKE_CURRENT_SOURCE_DIR}/code/rendering/vulkan
@@ -152,6 +152,7 @@ target_include_directories(example_sdl3_vulkan PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/image
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/image/dialog
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/image/downloader
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/image/widgets
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/video/player
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/video/downloader
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/video/video_preview

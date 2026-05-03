@@ -1,22 +1,22 @@
 #pragma once
-
-#include "Image_viewer_panel.hpp"
-#include "app_state_coordinator.hpp"
-#include "bulk_image_open_queue.hpp"
-#include "config_runtime.hpp"
-#include "history_preview.hpp"
-#include "media_history_manager.hpp"
-#include "media_load_handler.hpp"
-#include "open_image_dialogs.hpp"
-#include "opened_files_window.hpp"
-#include "video_context_menu.hpp"
-#include "video_downloader.hpp"
-#include "video_player.hpp"
-#include "window_state_toml.hpp"
-
+#include "pch.hpp"
 
 struct SDL_Window;
 class StyleEditor;
+class WindowStateToml;
+class vulkan_context;
+class ImageViewerPanel;
+class OpenImageDialogs;
+class BulkImageOpenQueue;
+class VideoPlayer;
+class VideoDownloader;
+class ConfigRuntime;
+class HistoryPreview;
+class OpenedFilesWindow;
+class VideoContextMenu;
+class MediaHistoryManager;
+class MediaLoadHandler;
+class AppStateCoordinator;
 
 /**
  * Owns the application main menu bar and coordinates all top-level subsystems.
@@ -35,9 +35,9 @@ class StyleEditor;
 class MainMenuBar {
 public:
     MainMenuBar();
-    ~MainMenuBar() = default;
+    ~MainMenuBar();
 
-    MainMenuBar(const MainMenuBar &) = delete;
+    MainMenuBar(const MainMenuBar &)            = delete;
     MainMenuBar &operator=(const MainMenuBar &) = delete;
 
     void Setup(StyleEditor    *style_editor,
@@ -76,31 +76,30 @@ public:
     /// Unload all GPU resources. Must be called before ImGui_ImplVulkan_Shutdown.
     void Shutdown();
 
-    bool request_quit; ///< Set to true when File > Quit is selected.
+    bool request_quit;   ///< Set to true when File > Quit is selected.
     bool request_reopen; ///< Set to true when Runtime Config requests app reopen.
 
 private:
     // ---- Non-owning external dependencies (provided by App) -----------------
-    StyleEditor    *m_style_editor;        ///< Optional style-editor window.
-    SDL_Window     *m_window;              ///< Parent SDL window for file dialogs.
-    vulkan_context *m_vk;                  ///< Active Vulkan context.
-    bool           *m_show_demo_window;    ///< Controls ImGui demo window visibility.
-    bool           *m_show_another_window; ///< Controls "Another Window" visibility.
+    StyleEditor    *m_style_editor;
+    SDL_Window     *m_window;
+    vulkan_context *m_vk;
+    bool           *m_show_demo_window;
+    bool           *m_show_another_window;
 
-    // ---- Owned subsystems ---------------------------------------------------
-    ImageViewerPanel   m_viewer;              ///< Owns all open image windows.
-    OpenImageDialogs   m_open_image_dialogs;  ///< File dialog + URL popup state.
-    BulkImageOpenQueue m_bulk_image_open;     ///< Off-thread bulk path validator.
-    VideoPlayer        m_video_player;        ///< Owns all open video windows.
-    VideoDownloader    m_video_downloader;    ///< Background video file caching.
-    ConfigRuntime      m_config_runtime;      ///< Runtime settings panel.
-    HistoryPreview     m_history_preview;     ///< Hover-thumbnail preview rendering.
-    OpenedFilesWindow  m_opened_files_window; ///< "Opened Files" companion list panel.
-    VideoContextMenu   m_video_context_menu;  ///< Right-click menu for video entries.
+    // ---- Owned subsystems (heap-allocated, incomplete types stay opaque) ----
+    std::unique_ptr<ImageViewerPanel>   m_viewer;
+    std::unique_ptr<OpenImageDialogs>   m_open_image_dialogs;
+    std::unique_ptr<BulkImageOpenQueue> m_bulk_image_open;
+    std::unique_ptr<VideoPlayer>        m_video_player;
+    std::unique_ptr<VideoDownloader>    m_video_downloader;
+    std::unique_ptr<ConfigRuntime>      m_config_runtime;
+    std::unique_ptr<HistoryPreview>     m_history_preview;
+    std::unique_ptr<OpenedFilesWindow>  m_opened_files_window;
+    std::unique_ptr<VideoContextMenu>   m_video_context_menu;
 
     // ---- Extracted responsibility classes -----------------------------------
-    MediaHistoryManager m_history_mgr;  ///< History ownership, push, erase, persist.
-    MediaLoadHandler    m_load_handler; ///< Routes pending paths/URLs to consumers.
-
-    AppStateCoordinator m_app_state; ///< History/config/cache forwarding and state persistence wiring.
+    std::unique_ptr<MediaHistoryManager> m_history_mgr;
+    std::unique_ptr<MediaLoadHandler>    m_load_handler;
+    std::unique_ptr<AppStateCoordinator> m_app_state;
 };

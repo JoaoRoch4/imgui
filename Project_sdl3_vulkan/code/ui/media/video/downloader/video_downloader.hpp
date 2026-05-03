@@ -1,5 +1,5 @@
 #pragma once
-
+#include "pch.hpp"
 
 struct mpv_handle;
 
@@ -29,23 +29,21 @@ public:
     VideoDownloader();
     ~VideoDownloader();
 
-    VideoDownloader(const VideoDownloader &) = delete;
+    VideoDownloader(const VideoDownloader &)            = delete;
     VideoDownloader &operator=(const VideoDownloader &) = delete;
 
     /// Set cache directory and start the worker thread.
-    /// Creating the directory is handled internally.
     void set_cache_dir(const std::filesystem::path &dir);
 
-    /// If a complete cached copy of the URL already exists on disk, return its
-    /// path immediately.  Otherwise enqueue a background download (idempotent —
-    /// calling again for an already-queued URL is a no-op) and return nullopt.
-    [[nodiscard]] std::optional<std::filesystem::path> get_or_enqueue(const std::string &url);
+    /// Return cached path immediately if it exists, otherwise enqueue
+    /// a background download (idempotent) and return nullopt.
+    [[nodiscard]] std::optional<std::filesystem::path>
+    get_or_enqueue(const std::string &url);
 
     /// Drain and return all downloads completed since the last call.
     std::vector<Result> take_completed();
 
-    /// Returns the number of bytes written to disk so far for @p url if it is
-    /// currently queued or downloading.  Returns 0 if the URL is not in-flight.
+    /// Bytes written so far for a currently in-flight URL; 0 if not queued.
     [[nodiscard]] uint64_t bytes_inflight(const std::string &url) const;
 
     /// Cancel active/queued downloads and remove cached files from disk.
@@ -61,24 +59,26 @@ private:
     };
 
     void worker(std::stop_token st);
+
+    // Worker entry point — runs on m_worker jthread
+    void worker_loop(std::stop_token st, uint64_t watch_id);
+
     void start_worker_thread();
     void stop_worker_thread(bool unregister_watch);
+
     [[nodiscard]] std::filesystem::path cache_path_for(const std::string &url) const;
 
-    /// Download url to target via an mpv_handle with stream-dump.
-    /// Cleans up the partial file on failure.
-    /// Passes st so the worker can cancel mid-download.
-    static bool download(const std::string &url,
-                         const std::filesystem::path &target,
-                         const std::stop_token &st,
-                         std::atomic<mpv_handle *> &current_out,
-                         std::atomic<uint64_t> &watch_id_ref);
+    /// Download url to target via mpv stream-dump. Deletes partial file on failure.
+    [[nodiscard]] bool download(const std::string &url,
+                               const std::filesystem::path &target,
+                               const std::stop_token &st,
+                               uint64_t watch_id);
 
     static uint64_t fnv1a(const std::string &s);
 
     std::filesystem::path     m_cache_dir;
     std::jthread              m_worker;
-    std::mutex                m_mutex;
+    mutable std::mutex        m_mutex;
     std::condition_variable   m_cv;
     std::vector<Job>          m_queue;
     std::vector<Result>       m_completed;

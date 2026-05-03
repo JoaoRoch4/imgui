@@ -1,6 +1,9 @@
 #pragma once
 
 // ── C++ standard library ──────────────────────────────────────────────────────
+
+#include <any>
+#include <print>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -25,9 +28,17 @@
 #include <deque>
 #include <system_error>
 
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
 // ── ImGui ─────────────────────────────────────────────────────────────────────
 #include <imgui.h>
 #include <imgui_impl_vulkan.h>
+#include <imgui_internal.h>
+#include <imgui_impl_sdl3.h>
+
+#include <implot.h>
 
 // ── Vulkan ────────────────────────────────────────────────────────────────────
 #include <vulkan/vulkan.h>
@@ -39,3 +50,5 @@
 
 #include <mpv/client.h>
 #include <mpv/render.h>
+
+#include <SDL3/SDL_vulkan.h>

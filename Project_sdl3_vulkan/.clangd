@@ -14,6 +14,7 @@ CompileFlags:
     - -I/home/joao/vscode/my_imgui/Project_sdl3_vulkan/code/core
     - -I/home/joao/vscode/my_imgui/Project_sdl3_vulkan/code/core/log
     - -I/home/joao/vscode/my_imgui/Project_sdl3_vulkan/code/core/thread
+    - -I/home/joao/vscode/my_imgui/Project_sdl3_vulkan/code/ui/FileExplorer
     - -I/home/joao/vscode/my_imgui/Project_sdl3_vulkan/code/ui/window/widgets
     - -I/home/joao/vscode/my_imgui/Project_sdl3_vulkan/code/ui/window/widgets/history
     - -I/home/joao/vscode/my_imgui/Project_sdl3_vulkan/code/ui/window/persistence

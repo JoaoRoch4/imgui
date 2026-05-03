@@ -40,7 +40,12 @@ find_package(reflectcpp CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(WebP CONFIG REQUIRED)
 find_package(CURL REQUIRED)
-pkg_check_modules(MPV REQUIRED mpv)
+# Use bundled mpv headers from external/mpv/include instead of system headers.
+# The shared library is still resolved from the system at link time.
+set(MPV_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/external/mpv/include)
+# Use vendored libplacebo headers for early integration scaffolding.
+set(LIBPLACEBO_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/external/libplacebo/src/include)
+find_library(MPV_LIBRARIES NAMES mpv REQUIRED)
 
 # ── Sources ───────────────────────────────────────────────────────────────────
 add_executable(example_sdl3_vulkan
@@ -92,13 +97,19 @@ add_executable(example_sdl3_vulkan
 
     # UI — video subsystem
     code/ui/media/video/player/video_player.cpp
+    code/ui/media/video/player/video_player_placebo.cpp
     code/ui/media/video/downloader/video_downloader.cpp
     code/ui/media/video/video_preview/video_hover_preview.cpp
     code/ui/media/video/video_preview/video_seek_preview.cpp
+    code/ui/media/video/player/VideoEntry.cpp
 
     # UI — app configuration
     code/ui/config/app_config.cpp
     code/ui/config/config_runtime.cpp
+
+    code/ui/FileExplorer/FileBrowser.cpp
+
+    code/ui/Editor/TextEditor.cpp
 
     # ImGui core + Freetype font rasterizer
     ${IMGUI_DIR}/imgui.cpp
@@ -118,6 +129,22 @@ add_executable(example_sdl3_vulkan
     code/ui/window/widgets/fps_plot.cpp
 )
 
+# ── Suppress warnings in vendored / external source files ───────────────────
+set_source_files_properties(
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_demo.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_sdl3.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
+    ${IMGUI_DIR}/misc/freetype/imgui_freetype.cpp
+    ${IMPLOT_DIR}/implot.cpp
+    ${IMPLOT_DIR}/implot_items.cpp
+    code/ui/Editor/TextEditor.cpp
+    PROPERTIES COMPILE_OPTIONS "-w"
+)
+
 # ── Precompiled header ────────────────────────────────────────────────────────
 # Compiles once per build type; all project .cpp files reuse it.
 # Only covers stable, frequently-included headers — not rapidly-changing ones.
@@ -126,15 +153,8 @@ target_precompile_headers(example_sdl3_vulkan PRIVATE
 )
 
 # ── Include directories ───────────────────────────────────────────────────────
+# Project-owned headers — warnings enabled.
 target_include_directories(example_sdl3_vulkan PRIVATE
-    # ImGui docking fork + Freetype bridge + ImPlot
-    ${IMGUI_DIR}
-    ${IMGUI_DIR}/backends
-    ${IMGUI_DIR}/misc/freetype
-    ${IMPLOT_DIR}
-
-    # Project source tree (each directory is listed so headers can be included
-    # without path prefixes from anywhere in the project)
     ${CMAKE_CURRENT_SOURCE_DIR}/code
     ${CMAKE_CURRENT_SOURCE_DIR}/code/main
     ${CMAKE_CURRENT_SOURCE_DIR}/code/pch
@@ -145,6 +165,8 @@ target_include_directories(example_sdl3_vulkan PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/code/rendering/vulkan
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/config
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/Editor
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/FileExplorer
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/window/persistence
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/window/widgets
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/window/widgets/history
@@ -158,15 +180,23 @@ target_include_directories(example_sdl3_vulkan PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/video/downloader
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/video/video_preview
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/video/widgets
+)
 
-    # System / pkg-config libraries
+# External / vendored / system headers — marked SYSTEM so the compiler
+# treats them as system headers and suppresses all warnings from them.
+target_include_directories(example_sdl3_vulkan SYSTEM PRIVATE
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+    ${IMGUI_DIR}/misc/freetype
+    ${IMPLOT_DIR}
     ${SDL3_INCLUDE_DIRS}
     ${VULKAN_INCLUDE_DIRS}
     ${FREETYPE_INCLUDE_DIRS}
     ${PLUTOSVG_INCLUDE_DIRS}
     ${Stb_INCLUDE_DIR}
     ${WEBP_INCLUDE_DIR}
-    ${MPV_INCLUDE_DIRS}
+    ${MPV_INCLUDE_DIRS}  # external/mpv/include (bundled headers)
+    ${LIBPLACEBO_INCLUDE_DIRS}
 )
 
 # ── Compile options ───────────────────────────────────────────────────────────

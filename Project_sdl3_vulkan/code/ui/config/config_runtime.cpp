@@ -1,5 +1,6 @@
 #include "config_runtime.hpp"
 
+#include "video_playback_mode.hpp"
 #include "video_hover_preview.hpp"
 #include "video_seek_preview.hpp"
 
@@ -68,6 +69,15 @@ ConfigRuntime::ConfigRuntime()
     , m_on_delete_all_cache_and_state{nullptr}
     , m_on_reopen_app{nullptr}
     , m_on_video_resume_threshold_changed{nullptr}
+    , m_pending_hover_preview_enabled{VideoHoverPreview::enabled}
+    , m_pending_hover_preview_delay_ms{static_cast<int>(VideoHoverPreview::hover_delay.count())}
+    , m_on_hover_preview_changed{nullptr}
+    , m_pending_global_playback_mode{static_cast<int>(VideoPlaybackMode::SwMpv)}
+    , m_pending_global_loop_enabled{false}
+    , m_on_video_playback_changed{nullptr}
+    , m_pending_vsync_enabled{WindowStateToml{}.vsync}
+    , m_on_vsync_changed{nullptr}
+    , m_on_restart_all_threads{nullptr}
 {
 }
 
@@ -106,6 +116,26 @@ void ConfigRuntime::SetVideoResumeThresholdChangedCallback(std::function<void(in
     m_on_video_resume_threshold_changed = std::move(cb);
 }
 
+void ConfigRuntime::SetHoverPreviewChangedCallback(std::function<void(bool, int)> cb)
+{
+    m_on_hover_preview_changed = std::move(cb);
+}
+
+void ConfigRuntime::SetVideoPlaybackChangedCallback(std::function<void(int, bool)> cb)
+{
+    m_on_video_playback_changed = std::move(cb);
+}
+
+void ConfigRuntime::SetVsyncChangedCallback(std::function<void(bool)> cb)
+{
+    m_on_vsync_changed = std::move(cb);
+}
+
+void ConfigRuntime::SetRestartAllThreadsCallback(std::function<void()> cb)
+{
+    m_on_restart_all_threads = std::move(cb);
+}
+
 int ConfigRuntime::VideoResumeThresholdSeconds() const
 {
     return m_applied_video_resume_threshold_seconds;
@@ -132,6 +162,27 @@ void ConfigRuntime::ApplyLayout(const WindowStateToml &state)
         m_pending_video_resume_threshold_seconds;
     if (m_on_video_resume_threshold_changed)
         m_on_video_resume_threshold_changed(m_applied_video_resume_threshold_seconds);
+
+    m_pending_hover_preview_enabled   = state.hover_preview_enabled;
+    m_pending_hover_preview_delay_ms  = std::clamp(state.hover_preview_delay_ms, 0, 5000);
+    VideoHoverPreview::enabled        = m_pending_hover_preview_enabled;
+    VideoHoverPreview::hover_delay    = std::chrono::milliseconds(m_pending_hover_preview_delay_ms);
+    if (m_on_hover_preview_changed)
+        m_on_hover_preview_changed(VideoHoverPreview::enabled, m_pending_hover_preview_delay_ms);
+
+    m_pending_global_playback_mode =
+        (state.global_video_playback_mode >= 0)
+            ? sanitize_video_playback_mode(state.global_video_playback_mode)
+            : (state.global_hwdec_enabled
+                   ? static_cast<int>(VideoPlaybackMode::NvdecMpv)
+                   : static_cast<int>(VideoPlaybackMode::SwMpv));
+    m_pending_global_loop_enabled  = state.global_loop_enabled;
+    if (m_on_video_playback_changed)
+        m_on_video_playback_changed(m_pending_global_playback_mode, m_pending_global_loop_enabled);
+
+    m_pending_vsync_enabled = state.vsync;
+    if (m_on_vsync_changed)
+        m_on_vsync_changed(m_pending_vsync_enabled);
 }
 
 void ConfigRuntime::ExportLayout(WindowStateToml *state) const
@@ -141,6 +192,12 @@ void ConfigRuntime::ExportLayout(WindowStateToml *state) const
     state->seek_preview_size  = WindowStateToml::Vec2Toml{VideoSeekPreview::preview_size.x,  VideoSeekPreview::preview_size.y};
     state->video_resume_persist_min_duration_seconds =
         m_applied_video_resume_threshold_seconds;
+    state->hover_preview_enabled   = VideoHoverPreview::enabled;
+    state->hover_preview_delay_ms  = static_cast<int>(VideoHoverPreview::hover_delay.count());
+    state->global_video_playback_mode = m_pending_global_playback_mode;
+    state->global_hwdec_enabled    = mode_uses_hwdec(m_pending_global_playback_mode);
+    state->global_loop_enabled     = m_pending_global_loop_enabled;
+    state->vsync                   = m_pending_vsync_enabled;
 }
 
 void ConfigRuntime::Draw()
@@ -176,6 +233,70 @@ void ConfigRuntime::Draw()
         }
         ImGui::SameLine();
         ImGui::TextDisabled("(takes effect for the next video opened)");
+    }
+
+    if (ImGui::CollapsingHeader("Hover Preview", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        ImGui::Checkbox("Enable hover preview", &m_pending_hover_preview_enabled);
+        ImGui::SetNextItemWidth(200.0f);
+        ImGui::SliderInt("Dwell delay (ms)##hover_delay",
+                         &m_pending_hover_preview_delay_ms,
+                         0, 3000, "%d ms");
+        ImGui::SameLine();
+        ImGui::TextDisabled("Time cursor must rest before popup appears");
+        if (ImGui::Button("Apply##hover_preview_apply"))
+        {
+            VideoHoverPreview::enabled    = m_pending_hover_preview_enabled;
+            VideoHoverPreview::hover_delay = std::chrono::milliseconds(
+                std::clamp(m_pending_hover_preview_delay_ms, 0, 3000));
+            if (m_on_hover_preview_changed)
+                m_on_hover_preview_changed(VideoHoverPreview::enabled,
+                                           static_cast<int>(VideoHoverPreview::hover_delay.count()));
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Video Playback", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        bool playback_changed = false;
+
+        int playback_mode = sanitize_video_playback_mode(m_pending_global_playback_mode);
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::Combo("Playback mode##global_playback_mode_combo",
+                         &playback_mode,
+                         k_video_playback_mode_items.data(),
+                         static_cast<int>(k_video_playback_mode_items.size()))) {
+            m_pending_global_playback_mode = sanitize_video_playback_mode(playback_mode);
+            playback_changed = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Applies to all open videos instantly");
+
+        if (ImGui::Checkbox("Loop##global_loop", &m_pending_global_loop_enabled)) {
+            playback_changed = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Applies to all open videos instantly");
+
+        if (ImGui::Checkbox("VSync##global_vsync", &m_pending_vsync_enabled)) {
+            if (m_on_vsync_changed)
+                m_on_vsync_changed(m_pending_vsync_enabled);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Same behavior as Hello, world checkbox");
+
+        if (playback_changed && m_on_video_playback_changed) {
+            m_on_video_playback_changed(m_pending_global_playback_mode,
+                                        m_pending_global_loop_enabled);
+        }
+
+        ImGui::Spacing();
+        if (ImGui::Button("Restart All Threads"))
+        {
+            if (m_on_restart_all_threads)
+                m_on_restart_all_threads();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Restart hover preview + reload all open videos");
     }
 
     if (ImGui::CollapsingHeader("Thumbnail Cache", ImGuiTreeNodeFlags_DefaultOpen))

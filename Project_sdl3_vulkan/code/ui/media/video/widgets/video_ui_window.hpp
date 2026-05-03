@@ -34,12 +34,15 @@ public:
         bool              load_failed;
         int               video_w;
         int               video_h;
+        uint64_t          downloaded_bytes;
         VkDescriptorSet   descriptor_set;
         VideoOsdOverlay  &osd;
         VideoSeekPreview &seek_preview;
         bool              has_prev;
         bool              has_next;
         bool             &show_stats;
+        bool             &hide_ui;
+        bool             &auto_hide_ui;
     };
 
     struct Callbacks {
@@ -56,6 +59,10 @@ public:
         std::function<void(const std::string &)> on_toggle_startup_video;
         std::function<bool(const std::string &)> is_startup_video_fixed;
         std::function<void(int)> on_switch_relative;
+        std::function<void(int, bool)> on_set_playback_state;
+        std::function<void(int)> on_seek_preview_hover;
+        std::function<bool()> on_get_app_fullscreen;
+        std::function<void(bool)> on_set_app_fullscreen;
     };
 
     Uint64 seek_seconds_button_foward = 5;

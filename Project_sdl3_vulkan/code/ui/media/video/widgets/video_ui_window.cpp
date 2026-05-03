@@ -66,7 +66,14 @@ void draw_open_shortcuts(const std::string &source,
 
 struct StatsCache {
     std::chrono::steady_clock::time_point next_sample;
-    std::array<std::string, 5> lines;
+    std::array<std::string, 4> lines;
+    // Pre-computed every time lines are refreshed, reused every frame.
+    float box_w = 0.0f;
+    float box_h = 0.0f;
+};
+
+struct AutoHideState {
+    std::chrono::steady_clock::time_point last_input;
 };
 
 void draw_stats_overlay(mpv_handle *mpv, ImVec2 image_pos, ImVec2 display_size)
@@ -87,22 +94,6 @@ void draw_stats_overlay(mpv_handle *mpv, ImVec2 image_pos, ImVec2 display_size)
         mpv_get_property(mpv, "frame-drop-count",     MPV_FORMAT_INT64, &frame_drop);
         mpv_get_property(mpv, "mistimed-frame-count", MPV_FORMAT_INT64, &mistimed);
 
-        int vo_pass_count = 0;
-        mpv_node passes_node{};
-        if (mpv_get_property(mpv, "vo-passes", MPV_FORMAT_NODE, &passes_node) >= 0) {
-            if (passes_node.format == MPV_FORMAT_NODE_MAP) {
-                for (int i = 0; i < passes_node.u.list->num; ++i) {
-                    if (std::strcmp(passes_node.u.list->keys[i], "fresh") == 0) {
-                        const mpv_node &fresh = passes_node.u.list->values[i];
-                        if (fresh.format == MPV_FORMAT_NODE_ARRAY)
-                            vo_pass_count = fresh.u.list->num;
-                        break;
-                    }
-                }
-            }
-            mpv_free_node_contents(&passes_node);
-        }
-
         auto format_bps = [](int64_t bps) -> std::string {
             std::array<char, 32> buf{};
             if (bps >= 1'000'000)
@@ -115,42 +106,52 @@ void draw_stats_overlay(mpv_handle *mpv, ImVec2 image_pos, ImVec2 display_size)
         };
 
         cache.lines = {
-            "Video:     " + format_bps(video_bitrate),
-            "Audio:     " + format_bps(audio_bitrate),
-            "VO Passes: " + std::to_string(vo_pass_count),
-            "Dropped:   " + std::to_string(frame_drop),
-            "Mistimed:  " + std::to_string(mistimed),
+            "Video:    " + format_bps(video_bitrate),
+            "Audio:    " + format_bps(audio_bitrate),
+            "Dropped:  " + std::to_string(frame_drop),
+            "Mistimed: " + std::to_string(mistimed),
         };
+
+        // Recompute box dimensions only when content changes (every 500 ms),
+        // not every frame.
+        const float pad_x    = 10.0f;
+        const float pad_y    = 8.0f;
+        const float line_gap = 3.0f;
+        const float line_h   = ImGui::GetTextLineHeight();
+
+        float max_w = 0.0f;
+        for (const auto &l : cache.lines)
+            max_w = std::max(max_w, ImGui::CalcTextSize(l.c_str()).x);
+
+        const int n   = static_cast<int>(cache.lines.size());
+        cache.box_w   = max_w + pad_x * 2.0f;
+        cache.box_h   = static_cast<float>(n) * (line_h + line_gap) - line_gap + pad_y * 2.0f;
     }
 
-    const std::array<std::string, 5> &lines = cache.lines;
+    if (cache.box_w <= 0.0f)
+        return;
 
-    const float pad_x      = 10.0f;
-    const float pad_y      = 8.0f;
-    const float line_gap   = 3.0f;
-    const float line_h     = ImGui::GetTextLineHeight();
+    const float pad_x    = 10.0f;
+    const float pad_y    = 8.0f;
+    const float line_gap = 3.0f;
+    const float line_h   = ImGui::GetTextLineHeight();
 
-    float max_w = 0.0f;
-    for (const auto &l : lines)
-        max_w = std::max(max_w, ImGui::CalcTextSize(l.c_str()).x);
-
-    const int   n         = static_cast<int>(lines.size());
-    const float box_w     = max_w + pad_x * 2.0f;
-    const float box_h     = static_cast<float>(n) * (line_h + line_gap) - line_gap + pad_y * 2.0f;
-    const ImVec2 box_min  = {image_pos.x + 8.0f, image_pos.y + 8.0f};
-    const ImVec2 box_max  = {box_min.x + box_w, box_min.y + box_h};
+    const ImVec2 box_min = {image_pos.x + 8.0f, image_pos.y + 8.0f};
+    const ImVec2 box_max = {box_min.x + cache.box_w, box_min.y + cache.box_h};
 
     ImDrawList *dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(box_min, box_max,
                       ImGui::GetColorU32(ImVec4(0.04f, 0.04f, 0.04f, 0.82f)), 6.0f);
     dl->AddRect(box_min, box_max,
                 ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 0.18f)), 6.0f);
+
+    const int n = static_cast<int>(cache.lines.size());
     for (int i = 0; i < n; ++i) {
         dl->AddText(
             ImVec2(box_min.x + pad_x,
                    box_min.y + pad_y + static_cast<float>(i) * (line_h + line_gap)),
             ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 1.0f)),
-            lines[static_cast<size_t>(i)].c_str());
+            cache.lines[static_cast<size_t>(i)].c_str());
     }
 }
 
@@ -158,15 +159,31 @@ void draw_stats_overlay(mpv_handle *mpv, ImVec2 image_pos, ImVec2 display_size)
 
 void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
 {
+    const auto is_fullscreen_active = [&state, &callbacks]() -> bool {
+        if (callbacks.on_get_app_fullscreen)
+            return callbacks.on_get_app_fullscreen();
+        return state.fullscreen;
+    };
+
+    const auto set_fullscreen_active = [&state, &callbacks](bool enabled) {
+        if (callbacks.on_set_app_fullscreen)
+            callbacks.on_set_app_fullscreen(enabled);
+        else
+            state.fullscreen = enabled;
+    };
+
     const bool startup_fixed = callbacks.is_startup_video_fixed &&
                                callbacks.is_startup_video_fixed(state.source);
     const char *startup_label = startup_fixed ? "Unfix Startup Videos" : "Set Startup Videos";
 
-    const auto toggle_pause = [&state]() {
+    const auto toggle_pause = [&state, &callbacks]() {
         int paused = 0;
         mpv_get_property(state.mpv, "pause", MPV_FORMAT_FLAG, &paused);
         int next_paused = paused ? 0 : 1;
-        mpv_set_property(state.mpv, "pause", MPV_FORMAT_FLAG, &next_paused);
+        if (callbacks.on_set_playback_state)
+            callbacks.on_set_playback_state(state.id, next_paused == 0);
+        else
+            mpv_set_property(state.mpv, "pause", MPV_FORMAT_FLAG, &next_paused);
         state.osd.show(next_paused ? "Paused" : "Playing");
     };
 
@@ -179,7 +196,7 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
     };
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_None;
-    if (state.fullscreen) {
+    if (is_fullscreen_active()) {
         const ImGuiViewport *viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(viewport->Pos, ImGuiCond_Always);
         ImGui::SetNextWindowSize(viewport->Size, ImGuiCond_Always);
@@ -224,6 +241,16 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
             }
             if (ImGui::MenuItem("Show Status", nullptr, state.show_stats))
                 state.show_stats = !state.show_stats;
+            const bool fullscreen_active = is_fullscreen_active();
+            if (ImGui::MenuItem("Fullscreen", nullptr, fullscreen_active)) {
+                const bool next_fullscreen = !fullscreen_active;
+                set_fullscreen_active(next_fullscreen);
+                state.osd.show(next_fullscreen ? "Fullscreen" : "Windowed");
+            }
+            if (ImGui::MenuItem("Hide UI", nullptr, state.hide_ui))
+                state.hide_ui = !state.hide_ui;
+            if (ImGui::MenuItem("Auto-hide UI", nullptr, state.auto_hide_ui))
+                state.auto_hide_ui = !state.auto_hide_ui;
             if (ImGui::MenuItem("Close Video")) {
                 state.open = false;
                 ImGui::CloseCurrentPopup();
@@ -242,7 +269,7 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
         }
     }
 
-    if (!state.fullscreen && ImGui::BeginMenuBar()) {
+    if (!is_fullscreen_active() && ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("File")) {
             draw_open_shortcuts(state.source, startup_label, callbacks);
             ImGui::EndMenu();
@@ -250,15 +277,42 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
         ImGui::EndMenuBar();
     }
 
-    if (state.fullscreen && ImGui::IsKeyPressed(ImGuiKey_Escape))
-        state.fullscreen = false;
+    if (is_fullscreen_active() && ImGui::IsKeyPressed(ImGuiKey_Escape))
+        set_fullscreen_active(false);
 
     constexpr float k_controls_height = 72.0f;
+    constexpr auto k_auto_hide_timeout = std::chrono::milliseconds(1500);
     const ImVec2 available = ImGui::GetContentRegionAvail();
+
+    static std::unordered_map<int, AutoHideState> s_auto_hide;
+    const bool window_hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
+                                                        ImGuiHoveredFlags_AllowWhenBlockedByPopup);
+    const auto now = std::chrono::steady_clock::now();
+    AutoHideState &auto_hide = s_auto_hide[state.id];
+    if (auto_hide.last_input.time_since_epoch().count() == 0)
+        auto_hide.last_input = now;
+
+    const ImGuiIO &io = ImGui::GetIO();
+    const bool mouse_moved = io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f;
+    const bool mouse_clicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
+                               ImGui::IsMouseClicked(ImGuiMouseButton_Right) ||
+                               ImGui::IsMouseClicked(ImGuiMouseButton_Middle);
+
+    if (window_hovered && (mouse_moved || mouse_clicked))
+        auto_hide.last_input = now;
+
+    const bool auto_hidden_now = state.auto_hide_ui &&
+                                 (!window_hovered || (now - auto_hide.last_input) >= k_auto_hide_timeout);
+    const bool show_controls = !state.hide_ui && !auto_hidden_now;
+
+    if (state.auto_hide_ui && auto_hidden_now && window_hovered)
+        ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+
+    const float effective_controls_height = show_controls ? k_controls_height : 0.0f;
 
     if (state.descriptor_set != VK_NULL_HANDLE && state.video_w > 0 && state.video_h > 0) {
         const float video_aspect = static_cast<float>(state.video_w) / static_cast<float>(state.video_h);
-        const float canvas_height = std::max(available.y - k_controls_height, 1.0f);
+        const float canvas_height = std::max(available.y - effective_controls_height, 1.0f);
         const float canvas_width = available.x;
 
         float display_width = 0.0f;
@@ -282,12 +336,24 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
                      ImVec2(display_width, display_height));
         if (ImGui::IsItemHovered()) {
             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                state.fullscreen = !state.fullscreen;
-                state.osd.show(state.fullscreen ? "Fullscreen" : "Windowed");
+                const bool next_fullscreen = !is_fullscreen_active();
+                set_fullscreen_active(next_fullscreen);
+                state.osd.show(next_fullscreen ? "Fullscreen" : "Windowed");
             } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 toggle_pause();
             }
         }
+
+        if (is_fullscreen_active() && state.downloaded_bytes > 0 && !state.osd.visible()) {
+            constexpr double k_mb = 1024.0 * 1024.0;
+            char progress_buf[64];
+            std::snprintf(progress_buf,
+                          sizeof(progress_buf),
+                          "Downloading %.1f MB",
+                          static_cast<double>(state.downloaded_bytes) / k_mb);
+            state.osd.show(progress_buf, std::chrono::milliseconds(700));
+        }
+
         state.osd.draw(image_pos, ImVec2(display_width, display_height));
         if (state.show_stats)
             draw_stats_overlay(state.mpv, image_pos, ImVec2(display_width, display_height));
@@ -295,6 +361,11 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
         ImGui::TextDisabled("Failed to load");
     } else {
         ImGui::TextDisabled("Loading...");
+    }
+
+    if (!show_controls) {
+        ImGui::End();
+        return;
     }
 
     ImGui::Separator();
@@ -327,7 +398,7 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
 
     ImGui::SameLine(0.0f, 4.0f);
     if (ImGui::SmallButton(">>"))
-        seek_by(seek_seconds_button_foward);
+        seek_by(static_cast<int>(seek_seconds_button_foward));
 
     ImGui::SameLine(0.0f, 4.0f);
     const bool loop_style_pushed = state.loop;
@@ -372,19 +443,27 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
             mpv_set_property(state.mpv, "time-pos", MPV_FORMAT_DOUBLE, &new_pos);
         }
 
-        if (ImGui::IsItemHovered() && state.seek_preview.descriptor_set() != VK_NULL_HANDLE) {
-            const ImVec2 item_min = ImGui::GetItemRectMin();
-            const ImVec2 item_max = ImGui::GetItemRectMax();
-            const float fraction = std::clamp(
-                (ImGui::GetMousePos().x - item_min.x) / (item_max.x - item_min.x),
-                0.0f,
-                1.0f);
-            state.seek_preview.seek(static_cast<double>(fraction) * duration);
-            ImGui::BeginTooltip();
-            ImGui::Image(std::bit_cast<ImTextureID>(state.seek_preview.descriptor_set()),
-                         state.seek_preview.size());
-            ImGui::Text("%s", format_time(static_cast<double>(fraction) * duration).c_str());
-            ImGui::EndTooltip();
+        if (ImGui::IsItemHovered()) {
+            if (callbacks.on_seek_preview_hover)
+                callbacks.on_seek_preview_hover(state.id);
+
+            // Lazily start the seek-preview mpv instance + thread on first hover.
+            state.seek_preview.ensure_active();
+
+            if (state.seek_preview.descriptor_set() != VK_NULL_HANDLE) {
+                const ImVec2 item_min = ImGui::GetItemRectMin();
+                const ImVec2 item_max = ImGui::GetItemRectMax();
+                const float fraction = std::clamp(
+                    (ImGui::GetMousePos().x - item_min.x) / (item_max.x - item_min.x),
+                    0.0f,
+                    1.0f);
+                state.seek_preview.seek(static_cast<double>(fraction) * duration);
+                ImGui::BeginTooltip();
+                ImGui::Image(std::bit_cast<ImTextureID>(state.seek_preview.descriptor_set()),
+                             state.seek_preview.size());
+                ImGui::Text("%s", format_time(static_cast<double>(fraction) * duration).c_str());
+                ImGui::EndTooltip();
+            }
         }
 
         ImGui::SameLine();

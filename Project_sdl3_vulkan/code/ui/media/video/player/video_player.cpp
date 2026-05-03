@@ -1,15 +1,27 @@
+#include "pch.hpp"
+
 #include "video_player.hpp"
 #include "video_context_menu.hpp"
 #include "history_preview.hpp"
 #include "video_downloader.hpp"
 #include "image_downloader.hpp"
 #include "core/log/debug_log.hpp"
+#include "video_ui_window.hpp"
+#include "video_osd_overlay.hpp"
+#include "video_ui_window.hpp"
+#include "video_hover_preview.hpp"
+#include "video_seek_preview.hpp"
+#include "window_fullscreen_utils.hpp"
+#include "video_seek_preview.hpp"
+#include "window_state_toml.hpp"
+#include "VideoEntry.hpp"
 
 
-#include <mpv/client.h>
-#include <mpv/render.h>
+#include "vulkan_context.hpp"
+#include "vulkan_upload_context.hpp"
 
-#include <unordered_set>
+
+
 
 // ============================================================================
 // Extension sets
@@ -96,56 +108,16 @@ const std::unordered_set<std::string> k_streaming_hosts = {
 
 } // namespace
 
-// ============================================================================
-// VideoEntry constructor
-// ============================================================================
 
-VideoPlayer::VideoEntry::VideoEntry()
-    : mpv{nullptr}
-    , render_ctx{nullptr}
-    , frame_dirty{false}
-    , video_w{0}
-    , video_h{0}
-    , pixel_buf{}
-    , image{VK_NULL_HANDLE}
-    , image_memory{VK_NULL_HANDLE}
-    , image_view{VK_NULL_HANDLE}
-    , sampler{VK_NULL_HANDLE}
-    , descriptor_set{VK_NULL_HANDLE}
-    , staging_buf{VK_NULL_HANDLE}
-    , staging_mem{VK_NULL_HANDLE}
-    , staging_mapped{nullptr}
-    , cmd_pool{VK_NULL_HANDLE}
-    , cmd_buf{VK_NULL_HANDLE}
-    , upload_fence{VK_NULL_HANDLE}
-    , upload_in_flight{false}
-    , last_upload_time{}
-    , title{}
-    , source{}
-    , kind{}
-    , id{0}
-    , open{true}
-    , fullscreen{false}
-    , loop{false}
-    , hwdec_enabled{false}
-    , resume_position_seconds{0}
-    , resume_seek_pending{false}
-    , reload_requested{false}
-    , load_failed{false}
-    , show_stats{false}
-    , reload_osd_message{}
-    , osd{}
-{
-}
 
 // ============================================================================
 // VideoPlayer constructor / destructor
 // ============================================================================
 
 VideoPlayer::VideoPlayer()
-    : m_hover{}
-    , m_seek_uploader{}
-    , m_ui_window{}
+    : m_hover{std::make_unique<VideoHoverPreview>()}
+    , m_seek_uploader{std::make_unique<VulkanUploadContext>()}
+    , m_ui_window{std::make_unique<VideoUiWindow>()}
     , m_vk{nullptr}
     , m_entries{}
     , m_next_id{0}
@@ -161,6 +133,8 @@ VideoPlayer::VideoPlayer()
     , m_history_preview{nullptr}
     , m_on_fix_videos{}
     , m_is_startup_videos_fixed{}
+    , m_on_get_app_fullscreen{}
+    , m_on_set_app_fullscreen{}
     , m_downloader{nullptr}
 {
 }
@@ -174,14 +148,45 @@ VideoPlayer::~VideoPlayer() {
 // Lifecycle
 // ============================================================================
 
+void VideoPlayer::bind_context(vulkan_context *vk) {
+    m_vk = vk;
+    m_main_thread_id = std::this_thread::get_id();
+}
+
 void VideoPlayer::setup(vulkan_context *vk) {
+    if (m_initialized)
+        return;
+    if (!vk)
+        return;
+
     APP_DEBUG_LOG("[VideoPlayer] setup");
+    m_main_thread_id = std::this_thread::get_id();
     m_vk = vk;
     constexpr VkDeviceSize k_max_seek_preview_bytes =
         static_cast<VkDeviceSize>(1920) * 1920 * 4;
-    m_seek_uploader.init(m_vk,
+    m_seek_uploader->init(m_vk,
                          static_cast<size_t>(k_max_seek_preview_bytes));
-    m_hover.setup(vk);
+    m_initialized = true;
+}
+
+bool VideoPlayer::ensure_setup() {
+    if (m_initialized)
+        return true;
+    if (!m_vk)
+        return false;
+    setup(m_vk);
+    return m_initialized;
+}
+
+bool VideoPlayer::ensure_hover_setup() {
+    if (!ensure_setup())
+        return false;
+    if (m_hover_initialized)
+        return true;
+
+    m_hover->setup(m_vk);
+    m_hover_initialized = true;
+    return true;
 }
 
 void VideoPlayer::shutdown() {
@@ -189,8 +194,16 @@ void VideoPlayer::shutdown() {
     if (!m_vk)
         return;
 
+    if (!m_initialized) {
+        m_hover_initialized = false;
+        m_vk = nullptr;
+        APP_DEBUG_LOG("[VideoPlayer] shutdown done");
+        return;
+    }
+
     // Stop all background threads before vkDeviceWaitIdle
-    m_hover.stop_thread();
+    if (m_hover_initialized)
+        m_hover->stop_thread();
     for (auto &ep : m_entries)
         ep->seek_preview.stop_thread();
 
@@ -210,9 +223,12 @@ void VideoPlayer::shutdown() {
     }
     m_entries.clear();
 
-    m_hover.shutdown();
-    m_seek_uploader.shutdown();
+    if (m_hover_initialized)
+        m_hover->shutdown();
+    m_seek_uploader->shutdown();
 
+    m_initialized = false;
+    m_hover_initialized = false;
     m_vk = nullptr;
     APP_DEBUG_LOG("[VideoPlayer] shutdown done");
 }
@@ -270,18 +286,18 @@ uint32_t VideoPlayer::find_memory_type(VkPhysicalDevice phys,
 // ============================================================================
 
 bool VideoPlayer::add_from_path(const std::filesystem::path &path) {
-    return add_from_path(path, {}, {}, false, 0, {});
+    return add_from_path(path, {}, {}, m_global_hwdec_enabled, 0, {});
 }
 
 bool VideoPlayer::add_from_path(const std::filesystem::path &path,
                                 const std::string &title) {
-    return add_from_path(path, title, {}, false, 0, {});
+    return add_from_path(path, title, {}, m_global_hwdec_enabled, 0, {});
 }
 
 bool VideoPlayer::add_from_path(const std::filesystem::path &path,
                                 const std::string &title,
                                 const std::string &logical_source) {
-    return add_from_path(path, title, logical_source, false, 0, {});
+    return add_from_path(path, title, logical_source, m_global_hwdec_enabled, 0, {});
 }
 
 bool VideoPlayer::add_from_path(const std::filesystem::path &path,
@@ -290,6 +306,9 @@ bool VideoPlayer::add_from_path(const std::filesystem::path &path,
                                 bool hwdec_enabled,
                                 int resume_position_seconds,
                                 const std::string &initial_osd_message) {
+    if (!ensure_setup())
+        return false;
+
     APP_DEBUG_LOG("[VideoPlayer] add_from_path: {}", path.string());
     auto ep = std::make_unique<VideoEntry>();
     ep->title = title.empty() ? path.filename().string() : title;
@@ -305,9 +324,14 @@ bool VideoPlayer::add_from_path(const std::filesystem::path &path,
     if (!ep->mpv)
         return false;
 
-    mpv_set_option_string(ep->mpv, "hwdec", ep->hwdec_enabled ? "auto-safe" : "no");
+    mpv_set_option_string(ep->mpv, "hwdec", ep->hwdec_enabled ? "nvdec" : "no");
+    if (ep->hwdec_enabled)
+        mpv_set_option_string(ep->mpv, "hwdec-codecs", "h264,hevc,av1,vp9,mpeg4,vc1");
     mpv_set_option_string(ep->mpv, "vo", "libmpv");
     if (ep->kind == "gif") {
+        mpv_set_option_string(ep->mpv, "loop-file", "inf");
+        ep->loop = true;
+    } else if (m_global_loop_enabled) {
         mpv_set_option_string(ep->mpv, "loop-file", "inf");
         ep->loop = true;
     }
@@ -348,7 +372,7 @@ bool VideoPlayer::add_from_path(const std::filesystem::path &path,
         mpv_set_property(ep->mpv, "pause", MPV_FORMAT_FLAG, &start_paused);
     }
 
-    ep->seek_preview.setup(m_vk, &m_seek_uploader, ep->playback_source);
+    ep->seek_preview.prepare(m_vk, m_seek_uploader.get(), ep->playback_source);
     if (!initial_osd_message.empty())
         ep->osd.show(initial_osd_message);
 
@@ -357,7 +381,7 @@ bool VideoPlayer::add_from_path(const std::filesystem::path &path,
 }
 
 bool VideoPlayer::add_from_url(const std::string &url, const std::string &title) {
-    return add_from_url(url, title, false, 0, {});
+    return add_from_url(url, title, m_global_hwdec_enabled, 0, {});
 }
 
 bool VideoPlayer::add_from_url(const std::string &url,
@@ -365,6 +389,9 @@ bool VideoPlayer::add_from_url(const std::string &url,
                                bool hwdec_enabled,
                                int resume_position_seconds,
                                const std::string &initial_osd_message) {
+    if (!ensure_setup())
+        return false;
+
     APP_DEBUG_LOG("[VideoPlayer] add_from_url: {} (title='{}')", url, title);
     auto ep = std::make_unique<VideoEntry>();
     ep->title = title;
@@ -380,7 +407,9 @@ bool VideoPlayer::add_from_url(const std::string &url,
     if (!ep->mpv)
         return false;
 
-    mpv_set_option_string(ep->mpv, "hwdec", ep->hwdec_enabled ? "auto-safe" : "no");
+    mpv_set_option_string(ep->mpv, "hwdec", ep->hwdec_enabled ? "nvdec" : "no");
+    if (ep->hwdec_enabled)
+        mpv_set_option_string(ep->mpv, "hwdec-codecs", "h264,hevc,av1,vp9,mpeg4,vc1");
     mpv_set_option_string(ep->mpv, "vo", "libmpv");
     // yt-dlp integration — lets mpv stream YouTube, Vimeo, Twitch, etc.
     mpv_set_option_string(ep->mpv, "ytdl", "yes");
@@ -392,6 +421,10 @@ bool VideoPlayer::add_from_url(const std::string &url,
     mpv_set_option_string(ep->mpv, "demuxer-max-back-bytes", "50MiB");
     mpv_set_option_string(ep->mpv, "demuxer-readahead-secs", "30");
     mpv_set_option_string(ep->mpv, "stream-buffer-size", "4MiB");
+    if (m_global_loop_enabled) {
+        mpv_set_option_string(ep->mpv, "loop-file", "inf");
+        ep->loop = true;
+    }
 
     if (mpv_initialize(ep->mpv) < 0) {
         mpv_terminate_destroy(ep->mpv);
@@ -623,17 +656,23 @@ void VideoPlayer::destroy_gpu_resources(VideoEntry &e) {
 // ============================================================================
 
 VkDescriptorSet VideoPlayer::hover_thumbnail(const std::string &source) {
+    if (!ensure_hover_setup())
+        return VK_NULL_HANDLE;
+
     static std::string s_last_hover_source;
     if (s_last_hover_source != source) {
         APP_DEBUG_LOG("[VideoPlayer] hover_thumbnail: {}", source);
         s_last_hover_source = source;
     }
-    return m_hover.thumbnail(source);
+    return m_hover->thumbnail(source);
 }
 
 bool VideoPlayer::save_hover_frame(const std::filesystem::path &path) {
+    if (!m_hover_initialized)
+        return false;
+
     APP_DEBUG_LOG("[VideoPlayer] save_hover_frame: {}", path.string());
-    return m_hover.save_frame(path);
+    return m_hover->save_frame(path);
 }
 
 VkDescriptorSet VideoPlayer::get_open_thumbnail(const std::string &source) const {
@@ -751,7 +790,11 @@ void VideoPlayer::poll_events(VideoEntry &e) {
 
         if (ev->event_id == MPV_EVENT_END_FILE) {
             const auto *edata = static_cast<const mpv_event_end_file *>(ev->data);
-            if (edata->reason != MPV_END_FILE_REASON_EOF) {
+            if (e.intentional_stop_pending) {
+                e.intentional_stop_pending = false;
+            } else if (edata->reason == MPV_END_FILE_REASON_EOF) {
+                e.finished_at_eof = true; // reset resume position to 00:00 on save
+            } else {
                 APP_DEBUG_LOG("[VideoPlayer] load failed id={} reason={}", e.id, static_cast<int>(edata->reason));
                 e.load_failed = true;
             }
@@ -761,6 +804,13 @@ void VideoPlayer::poll_events(VideoEntry &e) {
             double resume_position = static_cast<double>(e.resume_position_seconds);
             mpv_set_property(e.mpv, "time-pos", MPV_FORMAT_DOUBLE, &resume_position);
             e.resume_seek_pending = false;
+            e.media_unloaded = false;
+            e.load_failed = false;
+            e.finished_at_eof = false;
+        } else if (ev->event_id == MPV_EVENT_FILE_LOADED) {
+            e.media_unloaded = false;
+            e.load_failed = false;
+            e.finished_at_eof = false;
         }
 
         if (ev->event_id == MPV_EVENT_VIDEO_RECONFIG) {
@@ -790,8 +840,13 @@ void VideoPlayer::poll_events(VideoEntry &e) {
 // ============================================================================
 
 void VideoPlayer::update_frames() {
-    if (!m_vk)
+    if (!m_initialized)
         return;
+    assert(std::this_thread::get_id() == m_main_thread_id &&
+           "VideoPlayer::update_frames() must be called from the main thread");
+
+    if (m_hover_initialized)
+        m_hover->tick_idle();
 
     constexpr auto k_min_upload_interval = std::chrono::milliseconds(50);
 
@@ -802,10 +857,15 @@ void VideoPlayer::update_frames() {
 
         poll_events(e);
 
-        // If the render-update callback fired, render and upload a new frame.
-        // Cap upload cadence so video decode work does not dominate UI pacing.
-        if (e.frame_dirty.exchange(false, std::memory_order_acq_rel) &&
-            e.descriptor_set != VK_NULL_HANDLE) {
+        // If the media was intentionally unloaded, keep the last uploaded
+        // texture as a frozen thumbnail and ignore further render callbacks
+        // (which may produce black frames after "stop").
+        if (e.media_unloaded) {
+            e.frame_dirty.store(false, std::memory_order_release);
+        } else if (e.frame_dirty.exchange(false, std::memory_order_acq_rel) &&
+                   e.descriptor_set != VK_NULL_HANDLE) {
+            // If the render-update callback fired, render and upload a new frame.
+            // Cap upload cadence so video decode work does not dominate UI pacing.
             const auto now = std::chrono::steady_clock::now();
             if ((now - e.last_upload_time) >= k_min_upload_interval) {
                 if (upload_frame(e))
@@ -820,6 +880,8 @@ void VideoPlayer::update_frames() {
         // Upload preview thumbnail if the jthread has a new frame ready
         e.seek_preview.update();
     }
+
+    enforce_single_active_playback();
 }
 
 // ============================================================================
@@ -833,7 +895,9 @@ void VideoPlayer::set_player_menu_callbacks(
     std::function<const std::vector<WindowStateToml::ImageHistoryEntry> &()> history,
     HistoryPreview *preview,
     std::function<void(const std::string &)> on_fix_videos,
-    std::function<bool(const std::string &)> is_startup_videos_fixed)
+    std::function<bool(const std::string &)> is_startup_videos_fixed,
+    std::function<bool()> on_get_app_fullscreen,
+    std::function<void(bool)> on_set_app_fullscreen)
 {
     m_on_open_image    = std::move(on_open_image);
     m_on_open_online   = std::move(on_open_online);
@@ -842,6 +906,8 @@ void VideoPlayer::set_player_menu_callbacks(
     m_history_preview  = preview;
     m_on_fix_videos    = std::move(on_fix_videos);
     m_is_startup_videos_fixed = std::move(is_startup_videos_fixed);
+    m_on_get_app_fullscreen = std::move(on_get_app_fullscreen);
+    m_on_set_app_fullscreen = std::move(on_set_app_fullscreen);
 }
 
 void VideoPlayer::set_context_menu(
@@ -861,9 +927,33 @@ void VideoPlayer::set_downloader(VideoDownloader *d)
 
 void VideoPlayer::restart_hover_preview()
 {
+    if (!ensure_hover_setup())
+        return;
+
     APP_DEBUG_LOG("[VideoPlayer] restart_hover_preview");
-    m_hover.stop_thread();
-    m_hover.start_thread();
+    m_hover->stop_thread();
+    m_hover->start_thread();
+}
+
+bool VideoPlayer::consume_hover_popup_reopen_request()
+{
+    if (!m_hover_initialized)
+        return false;
+    return m_hover->consume_popup_reopen_request();
+}
+
+bool VideoPlayer::is_hover_dwell_pending(const std::string &source) const
+{
+    if (!m_hover_initialized)
+        return true;
+    return m_hover->is_hover_dwell_pending(source);
+}
+
+void VideoPlayer::notify_hover(const std::string &source)
+{
+    if (!ensure_hover_setup())
+        return;
+    m_hover->notify_hover(source);
 }
 
 bool VideoPlayer::can_toggle_hwdec(const std::string &source) const
@@ -916,6 +1006,10 @@ int VideoPlayer::current_position_seconds(const VideoEntry &entry) const
 
 int VideoPlayer::persisted_position_seconds(const VideoEntry &entry) const
 {
+    // Video finished naturally — reset resume timestamp to 00:00
+    if (entry.finished_at_eof)
+        return 0;
+
     double duration = 0.0;
     if (mpv_get_property(entry.mpv, "duration", MPV_FORMAT_DOUBLE, &duration) < 0)
         return current_position_seconds(entry);
@@ -945,9 +1039,50 @@ void VideoPlayer::toggle_hwdec(const std::string &source)
         entry->hwdec_enabled = !entry->hwdec_enabled;
         entry->resume_position_seconds = current_position_seconds(source);
         entry->resume_seek_pending = entry->resume_position_seconds > 0;
-        entry->reload_osd_message = entry->hwdec_enabled ? "HW Decode On" : "HW Decode Off";
+        entry->reload_osd_message = entry->hwdec_enabled ? "NVDEC On" : "NVDEC Off";
         entry->reload_requested = true;
         return;
+    }
+}
+
+void VideoPlayer::set_all_hwdec(bool enabled)
+{
+    m_global_hwdec_enabled = enabled;
+    for (auto &entry : m_entries) {
+        if (!entry->open || entry->hwdec_enabled == enabled)
+            continue;
+        entry->hwdec_enabled = enabled;
+        entry->resume_position_seconds = current_position_seconds(entry->source);
+        entry->resume_seek_pending = entry->resume_position_seconds > 0;
+        entry->reload_osd_message = enabled ? "NVDEC On" : "NVDEC Off";
+        entry->reload_requested = true;
+    }
+}
+
+void VideoPlayer::set_all_loop(bool enabled)
+{
+    m_global_loop_enabled = enabled;
+    for (auto &entry : m_entries) {
+        if (!entry->open)
+            continue;
+        entry->loop = enabled;
+        if (entry->mpv) {
+            const char *val = enabled ? "inf" : "no";
+            mpv_set_property_string(entry->mpv, "loop-file", val);
+        }
+    }
+}
+
+void VideoPlayer::restart_all_threads()
+{
+    restart_hover_preview();
+    for (auto &entry : m_entries) {
+        if (!entry->open)
+            continue;
+        entry->resume_position_seconds = current_position_seconds(entry->source);
+        entry->resume_seek_pending = entry->resume_position_seconds > 0;
+        entry->reload_osd_message = "Restarted";
+        entry->reload_requested = true;
     }
 }
 
@@ -972,7 +1107,7 @@ void VideoPlayer::notify_download_complete(const std::string &url,
         if (ep->source == url && ep->open) {
             APP_DEBUG_LOG("[VideoPlayer] download complete for id={} -> {}",
                          ep->id, cached_path.string());
-            ep->seek_preview.setup(m_vk, &m_seek_uploader, cached_path.string());
+            ep->seek_preview.prepare(m_vk, m_seek_uploader.get(), cached_path.string());
             ep->playback_source = cached_path.string();
             break;
         }
@@ -997,13 +1132,16 @@ void VideoPlayer::replace_source_with_saved_file(const std::string &source,
 }
 
 void VideoPlayer::draw() {
-    if (!m_vk)
+    if (!m_initialized)
         return;
+    assert(std::this_thread::get_id() == m_main_thread_id &&
+           "VideoPlayer::draw() must be called from the main thread");
 
     struct ReloadRequest {
         std::string source;
         std::string title;
         bool        hwdec_enabled;
+        bool        loop;
         int         resume_position_seconds;
         std::string initial_osd_message;
     };
@@ -1017,6 +1155,7 @@ void VideoPlayer::draw() {
             reload_queue.push_back({ep->source,
                                     ep->title,
                                     ep->hwdec_enabled,
+                                    ep->loop,
                                     ep->resume_position_seconds,
                                     ep->reload_osd_message});
             ep->reload_requested = false;
@@ -1104,13 +1243,25 @@ void VideoPlayer::draw() {
                           request.hwdec_enabled,
                           request.resume_position_seconds,
                           request.initial_osd_message);
+
+        // Restore the loop setting that was active before the reload.
+        if (request.loop && !m_entries.empty() && m_entries.back()->mpv) {
+            m_entries.back()->loop = true;
+            mpv_set_property_string(m_entries.back()->mpv, "loop-file", "inf");
+        }
     }
 
     for (int i = 0; i < static_cast<int>(m_entries.size()); ++i) {
         if (!m_entries[i]->open)
             continue;
         draw_window(*m_entries[i], i);
-        if (m_entries[i]->reload_requested) {
+        if (!m_entries[i]->open) {
+            // Closed by window X button or context menu: force teardown path,
+            // never reload this entry.
+            m_entries[i]->reload_requested = false;
+            m_entries[i]->reload_osd_message.clear();
+            m_entries[i]->seek_preview.stop_thread();
+        } else if (m_entries[i]->reload_requested) {
             m_entries[i]->open = false;
         }
     }
@@ -1120,6 +1271,9 @@ bool VideoPlayer::close_window(const std::string &source) {
     for (auto &ep : m_entries) {
         if (ep->open && ep->source == source) {
             ep->open = false;
+            ep->reload_requested = false;
+            ep->reload_osd_message.clear();
+            ep->seek_preview.stop_thread();
             return true;
         }
     }
@@ -1127,18 +1281,141 @@ bool VideoPlayer::close_window(const std::string &source) {
 }
 
 void VideoPlayer::close_all_windows() {
-    for (auto &ep : m_entries)
+    for (auto &ep : m_entries) {
         ep->open = false;
+        ep->reload_requested = false;
+        ep->reload_osd_message.clear();
+        ep->seek_preview.stop_thread();
+    }
+    m_active_video_id = -1;
+}
+
+void VideoPlayer::set_playback_state(int video_id, bool playing) {
+    if (playing) {
+        m_active_video_id = video_id;
+        // Exactly one active player: ensure selected is loaded and unload all others.
+        for (auto &entry : m_entries) {
+            if (!entry->open || !entry->mpv)
+                continue;
+
+            if (entry->id == video_id) {
+                if (entry->media_unloaded) {
+                    const char *cmd[] = {"loadfile", entry->playback_source.c_str(), "replace", nullptr};
+                    mpv_command_async(entry->mpv, 0, cmd);
+                    if (entry->resume_position_seconds > 0)
+                        entry->resume_seek_pending = true;
+                    entry->media_unloaded = false;
+                    entry->load_failed = false;
+                }
+                int pause_flag = 0;
+                mpv_set_property(entry->mpv, "pause", MPV_FORMAT_FLAG, &pause_flag);
+                continue;
+            }
+
+            entry->resume_position_seconds = current_position_seconds(*entry);
+            entry->resume_seek_pending = entry->resume_position_seconds > 0;
+            entry->intentional_stop_pending = true;
+            mpv_command_string(entry->mpv, "stop");
+            entry->media_unloaded = true;
+            entry->frame_dirty.store(false, std::memory_order_release);
+        }
+        return;
+    }
+
+    // Pause only the selected entry.
+    for (auto &entry : m_entries) {
+        if (!entry->open || !entry->mpv || entry->id != video_id)
+            continue;
+
+        int pause_flag = 1;
+        mpv_set_property(entry->mpv, "pause", MPV_FORMAT_FLAG, &pause_flag);
+        entry->frame_dirty.store(false, std::memory_order_release);
+        if (m_active_video_id == video_id)
+            m_active_video_id = -1;
+        return;
+    }
+}
+
+void VideoPlayer::enforce_single_active_playback() {
+    auto is_playing = [](VideoEntry &entry) -> bool {
+        int paused = 1;
+        if (mpv_get_property(entry.mpv, "pause", MPV_FORMAT_FLAG, &paused) < 0)
+            return false;
+        return paused == 0;
+    };
+
+    int selected_id = -1;
+
+    if (m_active_video_id >= 0) {
+        for (auto &entry : m_entries) {
+            if (!entry->open || !entry->mpv || entry->id != m_active_video_id)
+                continue;
+            if (is_playing(*entry))
+                selected_id = entry->id;
+            break;
+        }
+    }
+
+    if (selected_id < 0) {
+        for (auto &entry : m_entries) {
+            if (!entry->open || !entry->mpv)
+                continue;
+            if (is_playing(*entry)) {
+                selected_id = entry->id;
+                break;
+            }
+        }
+    }
+
+    if (selected_id < 0) {
+        m_active_video_id = -1;
+        return;
+    }
+
+    m_active_video_id = selected_id;
+    for (auto &entry : m_entries) {
+        if (!entry->open || !entry->mpv || entry->id != selected_id)
+            continue;
+
+        if (entry->media_unloaded) {
+            const char *cmd[] = {"loadfile", entry->playback_source.c_str(), "replace", nullptr};
+            mpv_command_async(entry->mpv, 0, cmd);
+            if (entry->resume_position_seconds > 0)
+                entry->resume_seek_pending = true;
+            entry->media_unloaded = false;
+            entry->load_failed = false;
+        }
+        break;
+    }
+
+    for (auto &entry : m_entries) {
+        if (!entry->open || !entry->mpv || entry->id == selected_id)
+            continue;
+
+        int paused = 1;
+        if (mpv_get_property(entry->mpv, "pause", MPV_FORMAT_FLAG, &paused) < 0)
+            continue;
+
+        if (!paused) {
+            entry->resume_position_seconds = current_position_seconds(*entry);
+            entry->resume_seek_pending = entry->resume_position_seconds > 0;
+            entry->intentional_stop_pending = true;
+            mpv_command_string(entry->mpv, "stop");
+            entry->media_unloaded = true;
+            entry->frame_dirty.store(false, std::memory_order_release);
+        }
+    }
 }
 
 void VideoPlayer::draw_window(VideoEntry &e, int idx) {
     std::string display_title = e.title;
+    uint64_t downloaded_bytes = 0;
     if (m_downloader) {
-        const uint64_t downloaded = m_downloader->bytes_inflight(e.source);
-        if (downloaded > 0) {
+        downloaded_bytes = m_downloader->bytes_inflight(e.source);
+        if (downloaded_bytes > 0) {
             constexpr double k_mb = 1024.0 * 1024.0;
             char buf[32];
-            std::snprintf(buf, sizeof(buf), " (%.1f MB↓)", static_cast<double>(downloaded) / k_mb);
+            std::snprintf(buf, sizeof(buf), " (%.1f MB↓)", static_cast<double>(downloaded_bytes) / k_mb);
             display_title += buf;
         }
     }
@@ -1157,12 +1434,15 @@ void VideoPlayer::draw_window(VideoEntry &e, int idx) {
         e.load_failed,
         e.video_w,
         e.video_h,
+        downloaded_bytes,
         e.descriptor_set,
         e.osd,
         e.seek_preview,
         idx > 0,
         idx < static_cast<int>(m_entries.size()) - 1,
         e.show_stats,
+        e.hide_ui,
+        e.auto_hide_ui,
     };
 
     if (!e.resume_seek_pending) {
@@ -1195,9 +1475,21 @@ void VideoPlayer::draw_window(VideoEntry &e, int idx) {
             e.title = m_entries[target]->title;
             e.kind = m_entries[target]->kind;
         },
+        [this](int video_id, bool playing) {
+            set_playback_state(video_id, playing);
+        },
+        [this](int hovered_video_id) {
+            for (auto &entry : m_entries) {
+                if (!entry->open || entry->id == hovered_video_id)
+                    continue;
+                entry->seek_preview.stop_thread();
+            }
+        },
+        m_on_get_app_fullscreen,
+        m_on_set_app_fullscreen,
     };
 
-    m_ui_window.draw(state, callbacks);
+    m_ui_window->draw(state, callbacks);
 }
 
 // ============================================================================

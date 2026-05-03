@@ -9,8 +9,10 @@
 #include "vulkan_context.hpp"
 #include "main_menu_bar.hpp"
 #include "style_editor.hpp"
+#include "window_fullscreen_utils.hpp"
 #include "window_state_toml.hpp"
 
+#include <imgui.h>
 
 App::App()
 {
@@ -78,7 +80,15 @@ int App::run()
     vk.set_vsync(wd, vsync);
 
     MainMenuBar menu_bar;
-    menu_bar.Setup(&style_editor, sdl.window, &vk, &show_demo_window, &show_another_window);
+    menu_bar.Setup(&style_editor,
+                   sdl.window,
+                   &vk,
+                   &show_demo_window,
+                   &show_another_window,
+                   [&](bool enabled) {
+                       vsync = enabled;
+                       vk.set_vsync(wd, vsync);
+                   });
     menu_bar.LoadOpenedFilesHistoryFromToml(state_path);
     menu_bar.SetStatePath(state_path);
     menu_bar.ApplyHistory(state);
@@ -149,9 +159,7 @@ int App::run()
             {
                 if (event.key.key == SDLK_F11)
                 {
-                    Uint32 flags = SDL_GetWindowFlags(sdl.window);
-                    bool is_fullscreen = (flags & SDL_WINDOW_FULLSCREEN) != 0;
-                    SDL_SetWindowFullscreen(sdl.window, !is_fullscreen);
+                    toggle_window_fullscreen(sdl.window);
                 }
             }
         }
@@ -174,7 +182,7 @@ int App::run()
 
         const auto uptime_now = std::chrono::steady_clock::now();
         const double uptime_seconds = std::chrono::duration<double>(uptime_now - app_start_time).count();
-        const int uptime_total_seconds = static_cast<int>(uptime_seconds);
+        const auto uptime_total_seconds = static_cast<int>(uptime_seconds);
         const int uptime_hours = uptime_total_seconds / 3600;
         const int uptime_minutes = (uptime_total_seconds % 3600) / 60;
         const int uptime_secs = uptime_total_seconds % 60;
@@ -227,6 +235,7 @@ int App::run()
             ImGui::Checkbox("Demo Window", &show_demo_window);
             ImGui::Checkbox("Another Window", &show_another_window);
             ImGui::Checkbox("Style Editor", &style_editor.IsOpen);
+
             if (ImGui::Checkbox("VSync", &vsync))
                 vk.set_vsync(wd, vsync);
             ImGui::SliderFloat("float", &f, 0.0f, 1.0f);

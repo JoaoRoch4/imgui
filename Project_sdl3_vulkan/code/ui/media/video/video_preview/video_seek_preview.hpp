@@ -20,6 +20,16 @@ public:
                VulkanUploadContext* uploader,
                const std::string& source);
 
+    // Stores params and allocates GPU resources, but does NOT start the mpv
+    // instance or background thread. Call once when a video is opened.
+    void prepare(vulkan_context* vk,
+                 VulkanUploadContext* uploader,
+                 const std::string& source);
+
+    // Lazily starts the mpv instance and worker thread on first use.
+    // Safe to call every frame; no-op if already active.
+    void ensure_active();
+
     void shutdown();
     void stop_thread(bool unregister_watch = true);
 
@@ -37,6 +47,8 @@ private:
     void destroy_gpu_resources(vulkan_context* vk);
 
 private:
+    std::mutex m_lifecycle_mutex;
+
     // mpv
     mpv_handle* m_mpv = nullptr;
     mpv_render_context* m_render_ctx = nullptr;
@@ -63,4 +75,6 @@ private:
 
     int m_w = 0;
     int m_h = 0;
+
+    std::string m_source; // stored by prepare(); consumed by ensure_active()
 };

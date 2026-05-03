@@ -9,6 +9,7 @@ class ImageViewerPanel;
 class OpenImageDialogs;
 class BulkImageOpenQueue;
 class VideoPlayer;
+class VideoPlayerPlacebo;
 class VideoDownloader;
 class ConfigRuntime;
 class HistoryPreview;
@@ -41,7 +42,8 @@ public:
   MainMenuBar &operator=(const MainMenuBar &) = delete;
 
   void Setup(StyleEditor *style_editor, SDL_Window *window, vulkan_context *vk,
-             bool *show_demo_window, bool *show_another_window);
+             bool *show_demo_window, bool *show_another_window,
+             std::function<void(bool)> on_vsync_changed = nullptr);
 
   /// Call once per frame between NewFrame() and Render().
   void Build();
@@ -89,6 +91,7 @@ private:
   std::unique_ptr<OpenImageDialogs> m_open_image_dialogs;
   std::unique_ptr<BulkImageOpenQueue> m_bulk_image_open;
   std::unique_ptr<VideoPlayer> m_video_player;
+  std::unique_ptr<VideoPlayerPlacebo> m_video_player_placebo;
   std::unique_ptr<VideoDownloader> m_video_downloader;
   std::unique_ptr<ConfigRuntime> m_config_runtime;
   std::unique_ptr<HistoryPreview> m_history_preview;
@@ -99,4 +102,6 @@ private:
   std::unique_ptr<MediaHistoryManager> m_history_mgr;
   std::unique_ptr<MediaLoadHandler> m_load_handler;
   std::unique_ptr<AppStateCoordinator> m_app_state;
+
+  bool m_use_video_player_placebo = false;
 };

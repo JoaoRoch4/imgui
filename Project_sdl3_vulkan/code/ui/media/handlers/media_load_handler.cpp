@@ -25,6 +25,7 @@
 #include "opened_files_window.hpp"
 #include "video_downloader.hpp"
 #include "video_player.hpp"
+#include "video_player_placebo.hpp"
 #include "vulkan_context.hpp"
 
 
@@ -41,11 +42,13 @@
 MediaLoadHandler::MediaLoadHandler()
     : m_viewer{nullptr}       // image rendering target — set in setup()
     , m_video_player{nullptr} // video rendering target — set in setup()
+    , m_video_player_placebo{nullptr}
     , m_bulk_queue{nullptr}   // off-thread path validator — set in setup()
     , m_history{nullptr}      // history push + persist — set in setup()
     , m_downloader{nullptr}   // background video cache — set in setup()
     , m_files_window{nullptr} // companion panel for history sync — set in setup()
     , m_vk{nullptr}           // Vulkan device for texture upload — set in setup()
+    , m_use_video_player_placebo{false}
 {
 }
 
@@ -70,19 +73,23 @@ MediaLoadHandler::MediaLoadHandler()
  */
 void MediaLoadHandler::setup(ImageViewerPanel    *viewer,
                              VideoPlayer         *video_player,
+                             VideoPlayerPlacebo  *video_player_placebo,
                              BulkImageOpenQueue  *bulk_queue,
                              MediaHistoryManager *history,
                              VideoDownloader     *downloader,
                              OpenedFilesWindow   *files_window,
-                             vulkan_context      *vk)
+                             vulkan_context      *vk,
+                             bool                 use_video_player_placebo)
 {
     m_viewer       = viewer;       // image rendering target
     m_video_player = video_player; // video rendering target
+    m_video_player_placebo = video_player_placebo;
     m_bulk_queue   = bulk_queue;   // background path validator
     m_history      = history;      // history list + persistence
     m_downloader   = downloader;   // video cache / background downloader
     m_files_window = files_window; // companion UI for history sync
     m_vk           = vk;           // Vulkan device for texture creation
+    m_use_video_player_placebo = use_video_player_placebo;
 }
 
 // ============================================================================
@@ -102,6 +109,15 @@ void MediaLoadHandler::setup(ImageViewerPanel    *viewer,
  */
 void MediaLoadHandler::process_pending_paths(const std::vector<std::string>& paths)
 {
+    const auto is_video_path = [this](const std::string &path) {
+        return m_use_video_player_placebo ? VideoPlayerPlacebo::is_video_path(path)
+                                          : VideoPlayer::is_video_path(path);
+    };
+    const auto add_from_path = [this](const std::filesystem::path &path) {
+        return m_use_video_player_placebo ? m_video_player_placebo->add_from_path(path)
+                                          : m_video_player->add_from_path(path);
+    };
+
     // Nothing to do with an empty batch or without a valid Vulkan context.
     if (paths.empty() || !m_vk)
         return;
@@ -115,9 +131,9 @@ void MediaLoadHandler::process_pending_paths(const std::vector<std::string>& pat
         image_paths.reserve(paths.size()); // avoid repeated heap reallocations
 
         for (const auto &path : paths) {
-            if (VideoPlayer::is_video_path(path)) {
+            if (is_video_path(path)) {
                 // Route directly to the player; it queues internally.
-                m_video_player->add_from_path(path);
+                add_from_path(path);
 
                 // Record in history using only the filename as the title.
                 m_history->push(path, "file",
@@ -139,9 +155,9 @@ void MediaLoadHandler::process_pending_paths(const std::vector<std::string>& pat
         const std::string &path = paths.front(); // only element in the vector
         const std::string title = std::filesystem::path(path).filename().string();
 
-        if (VideoPlayer::is_video_path(path)) {
+        if (is_video_path(path)) {
             // Single video — open in the player and push to history on success.
-            if (m_video_player->add_from_path(path))
+            if (add_from_path(path))
                 m_history->push(path, "file", title, *m_files_window);
         } else {
             // Single image — upload to the viewer panel and push to history.
@@ -164,13 +180,29 @@ void MediaLoadHandler::process_pending_paths(const std::vector<std::string>& pat
  */
 void MediaLoadHandler::process_pending_urls(const std::vector<std::string>& urls)
 {
+    const auto is_video_url = [this](const std::string &url) {
+        return m_use_video_player_placebo ? VideoPlayerPlacebo::is_video_url(url)
+                                          : VideoPlayer::is_video_url(url);
+    };
+    const auto add_from_path = [this](const std::filesystem::path &path,
+                                      const std::string &title,
+                                      const std::string &source) {
+        return m_use_video_player_placebo ? m_video_player_placebo->add_from_path(path, title, source)
+                                          : m_video_player->add_from_path(path, title, source);
+    };
+    const auto add_from_url = [this](const std::string &url,
+                                     const std::string &title) {
+        return m_use_video_player_placebo ? m_video_player_placebo->add_from_url(url, title)
+                                          : m_video_player->add_from_url(url, title);
+    };
+
     // Nothing to do with an empty list or without a valid Vulkan context.
     if (urls.empty() || !m_vk)
         return;
 
     for (const auto &url : urls) {
         // ---- Video URL --------------------------------------------------
-        if (VideoPlayer::is_video_url(url)) {
+        if (is_video_url(url)) {
             // Derive a human-readable name from the URL's path/query components.
             const std::string title = ImageDownloader::title_from_url(url);
 
@@ -179,7 +211,7 @@ void MediaLoadHandler::process_pending_urls(const std::vector<std::string>& urls
 
             if (cached) {
                 // A cached file exists — play from disk (faster and seekable).
-                if (m_video_player->add_from_path(*cached, title, url)) {
+                if (add_from_path(*cached, title, url)) {
                     m_history->push(url, "url", title, *m_files_window);
                     // Write the cache path into the history entry just pushed.
                     auto &entries = m_history->entries();
@@ -188,7 +220,7 @@ void MediaLoadHandler::process_pending_urls(const std::vector<std::string>& urls
                 }
             } else {
                 // No cache yet — stream directly from the URL.
-                if (m_video_player->add_from_url(url, title))
+                if (add_from_url(url, title))
                     m_history->push(url, "url", title, *m_files_window);
             }
             continue; // done with this URL; proceed to the next
@@ -224,6 +256,15 @@ void MediaLoadHandler::process_pending_urls(const std::vector<std::string>& urls
  */
 void MediaLoadHandler::drain_bulk_queue()
 {
+    const auto is_video_path = [this](const std::string &path) {
+        return m_use_video_player_placebo ? VideoPlayerPlacebo::is_video_path(path)
+                                          : VideoPlayer::is_video_path(path);
+    };
+    const auto add_from_path = [this](const std::filesystem::path &path) {
+        return m_use_video_player_placebo ? m_video_player_placebo->add_from_path(path)
+                                          : m_video_player->add_from_path(path);
+    };
+
     // Cannot upload without a valid Vulkan context.
     if (!m_vk)
         return;
@@ -237,9 +278,9 @@ void MediaLoadHandler::drain_bulk_queue()
     // Route the single validated path to the correct consumer.
     const std::string title = std::filesystem::path(next_path).filename().string();
 
-    if (VideoPlayer::is_video_path(next_path)) {
+    if (is_video_path(next_path)) {
         // The background worker confirmed the file exists — open in the player.
-        if (m_video_player->add_from_path(next_path))
+        if (add_from_path(next_path))
             m_history->push(next_path, "file", title, *m_files_window);
     } else {
         // The background worker confirmed the file exists — upload to the viewer.
@@ -260,8 +301,23 @@ void MediaLoadHandler::drain_bulk_queue()
  */
 void MediaLoadHandler::restore_from_history()
 {
+    const auto is_video_path = [this](const std::string &path) {
+        return m_use_video_player_placebo ? VideoPlayerPlacebo::is_video_path(path)
+                                          : VideoPlayer::is_video_path(path);
+    };
+    const auto is_video_url = [this](const std::string &url) {
+        return m_use_video_player_placebo ? VideoPlayerPlacebo::is_video_url(url)
+                                          : VideoPlayer::is_video_url(url);
+    };
+    const auto close_all_windows = [this]() {
+        if (m_use_video_player_placebo)
+            m_video_player_placebo->close_all_windows();
+        else
+            m_video_player->close_all_windows();
+    };
+
     // Close any windows that may already be open from a previous call.
-    m_video_player->close_all_windows();
+    close_all_windows();
 
     // Track whether any cached_path fields were updated so we can persist once.
     bool history_changed = false;
@@ -272,13 +328,12 @@ void MediaLoadHandler::restore_from_history()
             continue;
 
         // Skip non-video entries — images are opened on demand.
-        const bool is_video = VideoPlayer::is_video_path(h.source) ||
-                              VideoPlayer::is_video_url(h.source);
+        const bool is_video = is_video_path(h.source) || is_video_url(h.source);
         if (!is_video)
             continue;
 
         // ---- URL-sourced video ------------------------------------------
-        if (VideoPlayer::is_video_url(h.source)) {
+        if (is_video_url(h.source)) {
             std::filesystem::path cached_path;
             std::error_code ec; // used for non-throwing filesystem queries
 
@@ -303,22 +358,37 @@ void MediaLoadHandler::restore_from_history()
                 const std::string title = h.title.empty()
                     ? ImageDownloader::title_from_url(h.source)
                     : h.title;
-                m_video_player->add_from_path(cached_path,
-                                              title,
-                                              h.source,
-                                              h.hwdec_enabled,
-                                              h.resume_position_seconds,
-                                              {}); // local cached file
+                if (m_use_video_player_placebo)
+                    m_video_player_placebo->add_from_path(cached_path,
+                                                          title,
+                                                          h.source,
+                                                          h.hwdec_enabled,
+                                                          h.resume_position_seconds,
+                                                          {});
+                else
+                    m_video_player->add_from_path(cached_path,
+                                                  title,
+                                                  h.source,
+                                                  h.hwdec_enabled,
+                                                  h.resume_position_seconds,
+                                                  {}); // local cached file
             } else {
                 // Fall back to streaming the URL directly.
                 const std::string title = h.title.empty()
                     ? ImageDownloader::title_from_url(h.source)
                     : h.title;
-                m_video_player->add_from_url(h.source,
-                                             title,
-                                             h.hwdec_enabled,
-                                             h.resume_position_seconds,
-                                             {});
+                if (m_use_video_player_placebo)
+                    m_video_player_placebo->add_from_url(h.source,
+                                                         title,
+                                                         h.hwdec_enabled,
+                                                         h.resume_position_seconds,
+                                                         {});
+                else
+                    m_video_player->add_from_url(h.source,
+                                                 title,
+                                                 h.hwdec_enabled,
+                                                 h.resume_position_seconds,
+                                                 {});
             }
             continue; // move to the next history entry
         }
@@ -328,16 +398,31 @@ void MediaLoadHandler::restore_from_history()
         const std::filesystem::path local_path(h.source);
 
         // Only open if the file still exists — it may have been deleted since.
-        if (std::filesystem::exists(local_path, ec))
-            m_video_player->add_from_path(local_path,
-                                          h.title.empty() ? local_path.filename().string() : h.title,
-                                          h.source,
-                                          h.hwdec_enabled,
-                                          h.resume_position_seconds,
-                                          {});
+        if (std::filesystem::exists(local_path, ec)) {
+            if (m_use_video_player_placebo) {
+                m_video_player_placebo->add_from_path(local_path,
+                                                      h.title.empty() ? local_path.filename().string() : h.title,
+                                                      h.source,
+                                                      h.hwdec_enabled,
+                                                      h.resume_position_seconds,
+                                                      {});
+            } else {
+                m_video_player->add_from_path(local_path,
+                                              h.title.empty() ? local_path.filename().string() : h.title,
+                                              h.source,
+                                              h.hwdec_enabled,
+                                              h.resume_position_seconds,
+                                              {});
+            }
+        }
     }
 
     // If any cached_path fields were newly populated, write the update to disk.
     if (history_changed)
         m_history->persist();
+}
+
+void MediaLoadHandler::set_use_video_player_placebo(bool enabled)
+{
+    m_use_video_player_placebo = enabled;
 }

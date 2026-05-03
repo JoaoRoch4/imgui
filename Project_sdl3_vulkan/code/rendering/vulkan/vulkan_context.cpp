@@ -17,6 +17,10 @@ vulkan_context::vulkan_context()
     , queue(VK_NULL_HANDLE)
     , pipeline_cache(VK_NULL_HANDLE)
     , descriptor_pool(VK_NULL_HANDLE)
+    , vram_reserve_buffer(VK_NULL_HANDLE)
+    , vram_reserve_memory(VK_NULL_HANDLE)
+    , vram_reserve_bytes(0)
+    , vram_reserve_active(false)
     , min_image_count(2)
     , swap_chain_rebuild(false)
 #ifdef APP_USE_VULKAN_DEBUG_REPORT
@@ -192,6 +196,77 @@ void vulkan_context::setup(std::vector<const char *> instance_extensions) {
     // Create Descriptor Pool
     {
 
+        // Reserve a chunk of VRAM up front to keep memory headroom predictable
+        // for this application workload. Best-effort only: failure is logged.
+        constexpr VkDeviceSize k_vram_reserve_size =
+            static_cast<VkDeviceSize>(2ULL) * 1024ULL * 1024ULL * 1024ULL;
+
+        VkBufferCreateInfo reserve_buffer_info = {};
+        reserve_buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        reserve_buffer_info.size = k_vram_reserve_size;
+        reserve_buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        reserve_buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VkResult reserve_err = vkCreateBuffer(device, &reserve_buffer_info, allocator, &vram_reserve_buffer);
+        if (reserve_err == VK_SUCCESS) {
+            VkMemoryRequirements reserve_mem_req{};
+            vkGetBufferMemoryRequirements(device, vram_reserve_buffer, &reserve_mem_req);
+
+            VkPhysicalDeviceMemoryProperties mem_props{};
+            vkGetPhysicalDeviceMemoryProperties(physical_device, &mem_props);
+
+            auto find_memory_type = [&](uint32_t type_bits, VkMemoryPropertyFlags required, uint32_t *out_index) {
+                for (uint32_t i = 0; i < mem_props.memoryTypeCount; ++i) {
+                    const bool type_supported = (type_bits & (1u << i)) != 0;
+                    const bool flags_match = (mem_props.memoryTypes[i].propertyFlags & required) == required;
+                    if (type_supported && flags_match) {
+                        *out_index = i;
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            uint32_t memory_type_index = 0;
+            bool memory_type_found =
+                find_memory_type(reserve_mem_req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &memory_type_index);
+            if (!memory_type_found)
+                memory_type_found = find_memory_type(reserve_mem_req.memoryTypeBits, 0, &memory_type_index);
+
+            if (memory_type_found) {
+                VkMemoryAllocateInfo reserve_alloc_info = {};
+                reserve_alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+                reserve_alloc_info.allocationSize = reserve_mem_req.size;
+                reserve_alloc_info.memoryTypeIndex = memory_type_index;
+
+                reserve_err = vkAllocateMemory(device, &reserve_alloc_info, allocator, &vram_reserve_memory);
+                if (reserve_err == VK_SUCCESS) {
+                    reserve_err = vkBindBufferMemory(device, vram_reserve_buffer, vram_reserve_memory, 0);
+                    if (reserve_err == VK_SUCCESS) {
+                        vram_reserve_bytes = reserve_mem_req.size;
+                        vram_reserve_active = true;
+                        APP_DEBUG_LOG("[vulkan_context] reserved VRAM bytes={}",
+                                      static_cast<unsigned long long>(vram_reserve_bytes));
+                    }
+                }
+            } else {
+                reserve_err = VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+        }
+
+        if (!vram_reserve_active) {
+            if (vram_reserve_memory != VK_NULL_HANDLE) {
+                vkFreeMemory(device, vram_reserve_memory, allocator);
+                vram_reserve_memory = VK_NULL_HANDLE;
+            }
+            if (vram_reserve_buffer != VK_NULL_HANDLE) {
+                vkDestroyBuffer(device, vram_reserve_buffer, allocator);
+                vram_reserve_buffer = VK_NULL_HANDLE;
+            }
+            vram_reserve_bytes = 0;
+            APP_DEBUG_LOG("[vulkan_context] VRAM reserve skipped (2GB unavailable)");
+        }
+
         std::array<VkDescriptorPoolSize, 1> pool_sizes = {
             VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1024}};
         VkDescriptorPoolCreateInfo pool_info = {};
@@ -253,6 +328,18 @@ void vulkan_context::resize_window(ImGui_ImplVulkanH_Window *wd, int width, int 
 
 void vulkan_context::cleanup() {
     APP_DEBUG_LOG("[vulkan_context] cleanup begin");
+
+    if (vram_reserve_memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, vram_reserve_memory, allocator);
+        vram_reserve_memory = VK_NULL_HANDLE;
+    }
+    if (vram_reserve_buffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, vram_reserve_buffer, allocator);
+        vram_reserve_buffer = VK_NULL_HANDLE;
+    }
+    vram_reserve_active = false;
+    vram_reserve_bytes = 0;
+
     vkDestroyDescriptorPool(device, descriptor_pool, allocator);
 
 #ifdef APP_USE_VULKAN_DEBUG_REPORT

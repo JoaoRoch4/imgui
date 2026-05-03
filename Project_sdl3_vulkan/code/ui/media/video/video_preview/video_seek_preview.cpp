@@ -47,17 +47,58 @@ VideoSeekPreview::~VideoSeekPreview() { shutdown(); }
 
 void VideoSeekPreview::setup(vulkan_context *vk, VulkanUploadContext *uploader,
                              const std::string &source) {
-  _SeekDebug("setup source={}", source);
+  prepare(vk, uploader, source);
+  ensure_active();
+}
 
-  m_vk = vk;
+void VideoSeekPreview::prepare(vulkan_context *vk, VulkanUploadContext *uploader,
+                               const std::string &source) {
+  _SeekDebug("prepare source={}", source);
+
+  // If mpv is already running (source change), tear down the thread and mpv
+  // but keep GPU resources — they are source-independent fixed-size textures.
+  if (m_mpv) {
+    stop_thread();
+    if (m_render_ctx) {
+      mpv_render_context_free(m_render_ctx);
+      m_render_ctx = nullptr;
+    }
+    mpv_terminate_destroy(m_mpv);
+    m_mpv = nullptr;
+  }
+
+  m_vk       = vk;
   m_uploader = uploader;
+  m_source   = source;
 
-  init_mpv(source);
-  create_gpu_resources(vk);
+  // Allocate GPU resources once (idempotent — skipped if already created).
+  if (m_image == VK_NULL_HANDLE)
+    create_gpu_resources(vk);
+}
+
+void VideoSeekPreview::ensure_active() {
+  if (m_mpv)           return; // already running
+  if (!m_vk)           return; // not prepared
+  if (m_source.empty()) return;
+
+  _SeekDebug("ensure_active source={}", m_source);
+  init_mpv(m_source);
+  if (!m_mpv || !m_render_ctx)
+    return;
   start_thread();
 }
 
 void VideoSeekPreview::stop_thread(bool unregister_watch) {
+  std::lock_guard<std::mutex> lock(m_lifecycle_mutex);
+
+  const bool has_thread = m_thread.joinable();
+  const bool has_watch =
+      m_thread_watch_id.load(std::memory_order_acquire) != 0;
+
+  // Already stopped and no watch to unregister.
+  if (!has_thread && (!unregister_watch || !has_watch))
+    return;
+
   _SeekDebug("stop_thread");
 
   if (unregister_watch) {
@@ -66,10 +107,23 @@ void VideoSeekPreview::stop_thread(bool unregister_watch) {
     ThreadOverwatch::instance().unwatch(watch_id);
   }
 
-  m_thread = std::jthread{};
+  if (has_thread)
+    m_thread = std::jthread{};
 }
 
 void VideoSeekPreview::shutdown() {
+  const bool is_inactive = !m_thread.joinable() &&
+                           m_thread_watch_id.load(std::memory_order_acquire) == 0 &&
+                           m_mpv == nullptr && m_render_ctx == nullptr &&
+                           m_image == VK_NULL_HANDLE &&
+                           m_image_memory == VK_NULL_HANDLE &&
+                           m_image_view == VK_NULL_HANDLE &&
+                           m_sampler == VK_NULL_HANDLE &&
+                           m_descriptor_set == VK_NULL_HANDLE &&
+                           m_vk == nullptr && m_uploader == nullptr;
+  if (is_inactive)
+    return;
+
   _SeekDebug("shutdown");
   stop_thread();
 
@@ -87,6 +141,7 @@ void VideoSeekPreview::shutdown() {
 
   m_vk = nullptr;
   m_uploader = nullptr;
+  m_source.clear();
 }
 
 // ============================================================================
@@ -102,9 +157,14 @@ void VideoSeekPreview::init_mpv(const std::string &source) {
   mpv_set_option_string(m_mpv, "vo", "libmpv");
   mpv_set_option_string(m_mpv, "pause", "yes");
   mpv_set_option_string(m_mpv, "hr-seek", "yes");
+  mpv_set_option_string(m_mpv, "hwdec", "nvdec");
+  mpv_set_option_string(m_mpv, "hwdec-codecs", "h264,hevc,av1,vp9,mpeg4,vc1");
 
-  if (mpv_initialize(m_mpv) < 0)
+  if (mpv_initialize(m_mpv) < 0) {
+    mpv_terminate_destroy(m_mpv);
+    m_mpv = nullptr;
     return;
+  }
 
   std::any api_type_value{const_cast<char *>(MPV_RENDER_API_TYPE_SW)};
   auto *api_type_payload =
@@ -115,7 +175,12 @@ void VideoSeekPreview::init_mpv(const std::string &source) {
       {MPV_RENDER_PARAM_INVALID, nullptr},
   };
 
-  mpv_render_context_create(&m_render_ctx, m_mpv, params);
+  if (mpv_render_context_create(&m_render_ctx, m_mpv, params) < 0) {
+    mpv_terminate_destroy(m_mpv);
+    m_mpv = nullptr;
+    m_render_ctx = nullptr;
+    return;
+  }
 
   mpv_render_context_set_update_callback(
       m_render_ctx,
@@ -272,12 +337,28 @@ void VideoSeekPreview::destroy_gpu_resources(vulkan_context *vk) {
 // ============================================================================
 
 void VideoSeekPreview::start_thread() {
+  std::lock_guard<std::mutex> lock(m_lifecycle_mutex);
   _SeekDebug("start_thread");
+
+  if (!m_mpv || !m_render_ctx)
+    return;
 
   if (m_thread.joinable())
     return;
 
-  m_thread = std::jthread([this](std::stop_token stoken) {
+  if (m_thread_watch_id.load(std::memory_order_acquire) == 0) {
+    const auto watch_id = ThreadOverwatch::instance().watch(
+        "VideoSeekPreview::thread", std::chrono::milliseconds(5000),
+        [this]() { stop_thread(false); },
+        [this]() {
+          if (m_vk != nullptr && m_uploader != nullptr && m_mpv != nullptr &&
+              m_render_ctx != nullptr)
+            start_thread();
+        });
+    m_thread_watch_id.store(watch_id, std::memory_order_release);
+  }
+
+  m_thread = std::jthread([this](const std::stop_token& stoken) {
     while (!stoken.stop_requested()) {
       const uint64_t watch_id =
           m_thread_watch_id.load(std::memory_order_acquire);
@@ -328,18 +409,6 @@ void VideoSeekPreview::start_thread() {
       ThreadOverwatch::instance().heartbeat(watch_id);
     }
   });
-
-  if (m_thread_watch_id.load(std::memory_order_acquire) == 0) {
-    const auto watch_id = ThreadOverwatch::instance().watch(
-        "VideoSeekPreview::thread", std::chrono::milliseconds(5000),
-        [this]() { stop_thread(false); },
-        [this]() {
-          if (m_vk != nullptr && m_uploader != nullptr && m_mpv != nullptr &&
-              m_render_ctx != nullptr)
-            start_thread();
-        });
-    m_thread_watch_id.store(watch_id, std::memory_order_release);
-  }
 
   ThreadOverwatch::instance().heartbeat(
       m_thread_watch_id.load(std::memory_order_acquire));

@@ -8,6 +8,7 @@
 
 
 class VideoPlayer;
+class VideoPlayerPlacebo;
 class ImageViewerPanel;
 
 class HistoryPreview {
@@ -20,7 +21,10 @@ public:
 
     void setup(vulkan_context *vk,
                VideoPlayer      *vp     = nullptr,
-               ImageViewerPanel *viewer = nullptr);
+               ImageViewerPanel *viewer = nullptr,
+               VideoPlayerPlacebo *vpp   = nullptr,
+               bool use_video_player_placebo = false);
+    void set_use_video_player_placebo(bool enabled);
     void shutdown();
 
     void set_thumb_dir(const std::filesystem::path &dir);
@@ -79,7 +83,9 @@ private:
 
     vulkan_context   *m_vk;           ///< Active Vulkan device.
     VideoPlayer      *m_video_player; ///< Used for video thumbnail queries.
+    VideoPlayerPlacebo *m_video_player_placebo; ///< Optional VPP for video thumbnail queries.
     ImageViewerPanel *m_viewer;       ///< Used for already-open image texture look-up.
+    bool m_use_video_player_placebo;  ///< Use VPP instead of VP for thumbnail operations.
 
     std::jthread              m_worker;           ///< Background download / path-check thread.
     std::atomic<uint64_t>     m_worker_watch_id;  ///< ThreadOverwatch registration id.
@@ -95,4 +101,5 @@ private:
     std::string           m_active_source;    ///< Source string that m_active_texture was loaded from.
     std::filesystem::path m_active_temp_path; ///< Temp file to delete when the preview changes.
     std::filesystem::path m_thumb_dir;        ///< Directory where video thumbnail PNGs are cached.
+    std::unordered_set<std::string> m_saved_video_thumbnail_sources; ///< Sources with persisted video thumbnail PNG.
 };

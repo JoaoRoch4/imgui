@@ -1,12 +1,7 @@
 #pragma once
 
-#include "imgui.h"
+#include "pch.hpp"
 
-#include <array>
-#include <filesystem>
-#include <optional>
-#include <string>
-#include <vector>
 
 struct WindowStateToml {
   struct WindowRectToml {
@@ -124,6 +119,7 @@ struct WindowStateToml {
     std::string title;          // human-readable display name
     bool hwdec_enabled =
         false; // recreate mpv with hardware decode enabled for this entry
+    int playback_mode = -1; // -1=derive from hwdec_enabled, else 0=SW MPV, 1=NVDEC MPV, 2=NVDEC libplacebo
     int resume_position_seconds =
         0; // playback position restored when reopening this entry
     bool startup_restore =
@@ -137,6 +133,14 @@ struct WindowStateToml {
   bool show_opened_files_window = false;
   bool vsync = true;
   int video_resume_persist_min_duration_seconds = 30;
+  bool hover_preview_enabled = true;
+  int  hover_preview_delay_ms = 800;
+  std::string file_explorer_last_directory;
+  int file_explorer_sort_mode = 0;
+  std::vector<std::string> file_explorer_recent_directories;
+  bool global_hwdec_enabled = false;
+  int global_video_playback_mode = -1; // -1=derive from global_hwdec_enabled, else 0=SW MPV, 1=NVDEC MPV, 2=NVDEC libplacebo
+  bool global_loop_enabled = false;
 
   std::optional<ColorToml> clear_color;
 

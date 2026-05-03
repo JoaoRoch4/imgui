@@ -8,19 +8,24 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <cassert>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cctype>
 #include <filesystem>
 #include <functional>
 #include <fstream>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <regex>
+#include <unordered_set>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -50,6 +55,7 @@
 
 #include <mpv/client.h>
 #include <mpv/render.h>
+#include <libplacebo/common.h>
 
 #include <SDL3/SDL_vulkan.h>
 

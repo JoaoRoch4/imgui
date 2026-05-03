@@ -1,18 +1,20 @@
 #pragma once
 
 #include "pch.hpp"
-
-#include "video_osd_overlay.hpp"
-#include "video_ui_window.hpp"
-#include "video_hover_preview.hpp"
-#include "video_seek_preview.hpp"
-#include "vulkan_context.hpp"
-#include "vulkan_upload_context.hpp"
 #include "window_state_toml.hpp"
+
+
 
 class VideoContextMenu;
 class HistoryPreview;
 class VideoDownloader;
+class vulkan_context;
+class VideoHoverPreview;
+class VulkanUploadContext;
+class VideoUiWindow;
+class VideoOsdOverlay;
+class VideoSeekPreview;
+struct VideoEntry;
 
 /// Manages one or more mpv-backed video/GIF/audio windows rendered into
 /// Vulkan textures via the libmpv software render API.
@@ -28,6 +30,9 @@ public:
 
     VideoPlayer(const VideoPlayer &) = delete;
     VideoPlayer &operator=(const VideoPlayer &) = delete;
+
+    /// Bind Vulkan context without starting worker threads.
+    void bind_context(vulkan_context *vk);
 
     void setup(vulkan_context *vk);
     void shutdown();
@@ -104,6 +109,9 @@ public:
     /// Returns VK_NULL_HANDLE until the first frame is ready.
     [[nodiscard]] VkDescriptorSet hover_thumbnail(const std::string &source);
 
+    /// Register a hover on source to tick the dwell timer without fetching a frame.
+    void notify_hover(const std::string &source);
+
     /// Save the current hover frame to a PNG file.
     /// Returns true on success; false if no valid frame has been rendered yet.
     bool save_hover_frame(const std::filesystem::path &path);
@@ -120,6 +128,12 @@ public:
     /// Stop and restart the hover-preview thread (useful when it gets stuck).
     void restart_hover_preview();
 
+    /// True once when hover UI should close/reopen tooltip after hover thread recovery.
+    [[nodiscard]] bool consume_hover_popup_reopen_request();
+
+    /// True while the hover dwell delay has not yet elapsed for the given source.
+    [[nodiscard]] bool is_hover_dwell_pending(const std::string &source) const;
+
     [[nodiscard]] bool can_toggle_hwdec(const std::string &source) const;
     [[nodiscard]] bool is_hwdec_enabled(const std::string &source) const;
     [[nodiscard]] int current_position_seconds(const std::string &source) const;
@@ -128,6 +142,15 @@ public:
     [[nodiscard]] int resume_persist_min_duration_seconds() const;
     void toggle_hwdec(const std::string &source);
     void sync_history_state(std::vector<WindowStateToml::ImageHistoryEntry> &history) const;
+
+    /// Set hwdec on all currently open entries (they reload immediately).
+    void set_all_hwdec(bool enabled);
+
+    /// Set loop on all currently open entries (applied immediately via mpv command).
+    void set_all_loop(bool enabled);
+
+    /// Restart all worker threads: hover preview + every open mpv entry (reload).
+    void restart_all_threads();
 
     /// Attach a VideoContextMenu for right-click menus on video windows.
     ///
@@ -155,62 +178,20 @@ public:
         std::function<const std::vector<WindowStateToml::ImageHistoryEntry> &()> history,
         HistoryPreview *preview = nullptr,
         std::function<void(const std::string &)> on_fix_videos = nullptr,
-        std::function<bool(const std::string &)> is_startup_videos_fixed = nullptr);
+        std::function<bool(const std::string &)> is_startup_videos_fixed = nullptr,
+        std::function<bool()> on_get_app_fullscreen = nullptr,
+        std::function<void(bool)> on_set_app_fullscreen = nullptr);
 
 
     /// Size used for hover/seek-preview thumbnails.
     static constexpr ImVec2 k_preview_size{320.0f, 180.0f};
 
 private:
+    bool ensure_setup();
+    bool ensure_hover_setup();
+
     /// All per-video runtime state.
-    struct VideoEntry {
-        VideoEntry();
-
-        mpv_handle         *mpv;
-        mpv_render_context *render_ctx;
-        std::atomic<bool>   frame_dirty;
-
-        int                  video_w;
-        int                  video_h;
-        std::vector<uint8_t> pixel_buf;
-
-        // Vulkan resources (created once VIDEO_RECONFIG fires with valid dims)
-        VkImage         image;
-        VkDeviceMemory  image_memory;
-        VkImageView     image_view;
-        VkSampler       sampler;
-        VkDescriptorSet descriptor_set;
-        VkBuffer        staging_buf;
-        VkDeviceMemory  staging_mem;
-        void           *staging_mapped;
-        VkCommandPool   cmd_pool;
-        VkCommandBuffer cmd_buf;
-        VkFence         upload_fence;
-        bool            upload_in_flight;
-        std::chrono::steady_clock::time_point last_upload_time;
-
-        // Entry metadata
-        std::string title;
-        std::string source;
-        std::string playback_source;
-        std::string kind; ///< "video", "gif", or "audio"
-        int         id;
-        bool        open;
-        bool        fullscreen;
-        bool        loop;
-        bool        hwdec_enabled;
-        int         resume_position_seconds;
-        bool        resume_seek_pending;
-        bool        reload_requested;
-        bool        load_failed;
-        bool        show_stats;
-        std::string reload_osd_message;
-
-        VideoOsdOverlay osd;
-
-        // Seek-preview thumbnail (dedicated mpv + jthread via VideoSeekPreview)
-        VideoSeekPreview seek_preview;
-    };
+    
 
     static uint32_t find_memory_type(VkPhysicalDevice phys,
                                      uint32_t filter,
@@ -221,18 +202,27 @@ private:
     bool upload_frame(VideoEntry &e);
     void draw_window(VideoEntry &e, int idx);
     void poll_events(VideoEntry &e);
+    void set_playback_state(int video_id, bool playing);
+    void enforce_single_active_playback();
     [[nodiscard]] int current_position_seconds(const VideoEntry &entry) const;
     [[nodiscard]] int persisted_position_seconds(const VideoEntry &entry) const;
 
     // Shared hover thumbnail (one per VideoPlayer)
-    VideoHoverPreview m_hover;
-    VulkanUploadContext m_seek_uploader;
-    VideoUiWindow m_ui_window;
+    std::unique_ptr<VideoHoverPreview> m_hover;
+    std::unique_ptr<VulkanUploadContext> m_seek_uploader;
+    std::unique_ptr<VideoUiWindow> m_ui_window;
 
     vulkan_context *m_vk;
     std::vector<std::unique_ptr<VideoEntry>> m_entries;
     int m_next_id;
+    int m_active_video_id{-1};
     int m_resume_persist_min_duration_seconds;
+
+    // Global defaults applied to all newly-opened videos.
+    bool m_global_hwdec_enabled = false;
+    bool m_global_loop_enabled  = false;
+    bool m_initialized = false;
+    bool m_hover_initialized = false;
 
     // Optional context menu (set via set_context_menu)
     VideoContextMenu *m_ctx_menu;
@@ -247,6 +237,11 @@ private:
     HistoryPreview *m_history_preview;
     std::function<void(const std::string &)> m_on_fix_videos;
     std::function<bool(const std::string &)> m_is_startup_videos_fixed;
+    std::function<bool()> m_on_get_app_fullscreen;
+    std::function<void(bool)> m_on_set_app_fullscreen;
     VideoDownloader *m_downloader{nullptr};
+
+    // Thread-safety guard: captured at setup(), checked in update_frames()/draw().
+    std::thread::id m_main_thread_id;
 };
 

@@ -63,6 +63,7 @@ void VideoHoverPreview::setup(vulkan_context *vk) {
     init_mpv();
     create_shared();
     start_thread();
+    m_last_use_time = std::chrono::steady_clock::now();
 
     m_buf.resize(m_w * m_h * 4);
 }
@@ -95,6 +96,14 @@ void VideoHoverPreview::shutdown() {
 
     m_cache.clear();
     m_lru.clear();
+
+    if (m_watchdog_restart_count > 0 || m_idle_stop_count > 0) {
+        _Debug("summary restarts={} idle_stops={} last_restart_source='{}'",
+               m_watchdog_restart_count,
+               m_idle_stop_count,
+               m_last_restart_source);
+    }
+
     m_vk = nullptr;
 }
 
@@ -111,6 +120,8 @@ void VideoHoverPreview::init_mpv() {
     mpv_set_option_string(m_mpv, "pause", "yes");
     mpv_set_option_string(m_mpv, "mute", "yes");
     mpv_set_option_string(m_mpv, "loop-file", "inf");
+    mpv_set_option_string(m_mpv, "hwdec", "nvdec");
+    mpv_set_option_string(m_mpv, "hwdec-codecs", "h264,hevc,av1,vp9,mpeg4,vc1");
 
     mpv_initialize(m_mpv);
 
@@ -152,11 +163,13 @@ void VideoHoverPreview::start_thread() {
                 m_waiting.store(false);
             }
 
-            if (!m_frame_dirty.exchange(false))
+            if (!m_frame_dirty.exchange(false)) {
                 continue;
+            }
 
-            if (m_waiting.load())
+            if (m_waiting.load()) {
                 continue;
+            }
 
             std::lock_guard lock(m_buf_mutex);
 
@@ -348,6 +361,7 @@ void VideoHoverPreview::flush_pending_upload() {
 
     slot.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     slot.has_frame = true;
+    m_has_first_preview_frame = true;
     m_pending_source.clear();
     m_upload_pending.store(false, std::memory_order_release);
 }
@@ -357,6 +371,26 @@ void VideoHoverPreview::flush_pending_upload() {
 // ============================================================
 
 VkDescriptorSet VideoHoverPreview::thumbnail(const std::string &source) {
+    if (!enabled)
+        return VK_NULL_HANDLE;
+
+    const auto now = std::chrono::steady_clock::now();
+    m_last_use_time = now;
+
+    // --- hover dwell delay ---------------------------------------------------
+    if (source != m_hovered_source) {
+        m_hovered_source = source;
+        m_hover_start    = now;
+        m_popup_reopen_requested.store(true, std::memory_order_release);
+        return VK_NULL_HANDLE;
+    }
+    if ((now - m_hover_start) < hover_delay)
+        return VK_NULL_HANDLE;
+    // -------------------------------------------------------------------------
+
+    if (!m_thread.joinable())
+        start_thread();
+
     flush_pending_upload();
 
     if (!m_cache.contains(source)) {
@@ -380,6 +414,87 @@ VkDescriptorSet VideoHoverPreview::thumbnail(const std::string &source) {
     }
 
     return slot.has_frame ? slot.descriptor : VK_NULL_HANDLE;
+}
+
+bool VideoHoverPreview::is_hover_dwell_pending(const std::string &source) const {
+    if (source != m_hovered_source)
+        return true; // not yet registered — treat as pending
+    return (std::chrono::steady_clock::now() - m_hover_start) < hover_delay;
+}
+
+void VideoHoverPreview::notify_hover(const std::string &source) {
+    const auto now = std::chrono::steady_clock::now();
+    if (source != m_hovered_source) {
+        m_hovered_source = source;
+        m_hover_start    = now;
+        m_popup_reopen_requested.store(true, std::memory_order_release);
+    }
+}
+
+bool VideoHoverPreview::consume_popup_reopen_request() {
+    return m_popup_reopen_requested.exchange(false, std::memory_order_acq_rel);
+}
+
+void VideoHoverPreview::tick_idle() {
+    if (!m_thread.joinable())
+        return;
+
+    const auto now = std::chrono::steady_clock::now();
+    const bool can_restart_now =
+        (m_last_restart_time.time_since_epoch().count() == 0 ||
+         (now - m_last_restart_time) >= loading_restart_cooldown);
+
+    const auto restart_hover_thread = [this, now]() {
+        m_last_restart_time = now;
+        ++m_watchdog_restart_count;
+        m_last_restart_source = m_current;
+        _Debug("watchdog restart #{} source='{}'",
+               m_watchdog_restart_count,
+               m_last_restart_source);
+        m_popup_reopen_requested.store(true, std::memory_order_release);
+        stop_thread();
+        start_thread();
+        m_waiting.store(false, std::memory_order_release);
+        m_frame_dirty.store(false, std::memory_order_release);
+        if (!m_current.empty())
+            load_source(m_current);
+    };
+
+    if (m_waiting.load(std::memory_order_acquire) &&
+        m_last_load_time.time_since_epoch().count() != 0 &&
+        (now - m_last_load_time) >= loading_restart_timeout &&
+        can_restart_now) {
+        _Debug("loading timeout (>1s) -> restarting hover thread");
+        restart_hover_thread();
+        return;
+    }
+
+    if ((now - m_last_use_time) <= idle_thread_timeout &&
+        !m_current.empty() &&
+        m_last_load_time.time_since_epoch().count() != 0 &&
+        (now - m_last_load_time) >= no_frame_restart_timeout &&
+        can_restart_now) {
+        const auto it = m_cache.find(m_current);
+        const bool has_frame = it != m_cache.end() && it->second.has_frame;
+        if (!has_frame) {
+            _Debug("no-frame timeout -> restarting hover thread");
+            restart_hover_thread();
+            return;
+        }
+    }
+
+    if (!m_has_first_preview_frame)
+        return;
+    if (m_last_use_time.time_since_epoch().count() == 0)
+        return;
+    if ((now - m_last_use_time) < idle_thread_timeout)
+        return;
+
+    ++m_idle_stop_count;
+    _Debug("idle timeout -> stopping hover thread (count={})", m_idle_stop_count);
+    m_popup_reopen_requested.store(true, std::memory_order_release);
+    stop_playback();
+    stop_thread();
 }
 
 // ============================================================

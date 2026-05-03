@@ -13,6 +13,7 @@
 #include "media_history_manager.hpp"
 #include "image_downloader.hpp"
 #include "opened_files_window.hpp"
+#include "video_playback_mode.hpp"
 #include "window_state_toml.hpp"
 
 #include <ctime>
@@ -122,6 +123,7 @@ void MediaHistoryManager::push(const std::string &source,
     if (had_existing_entry) {
         entry.thumbnail_path = preserved_entry.thumbnail_path;
         entry.cached_path = preserved_entry.cached_path;
+        entry.playback_mode = preserved_entry.playback_mode;
         entry.hwdec_enabled = preserved_entry.hwdec_enabled;
         entry.resume_position_seconds = preserved_entry.resume_position_seconds;
         entry.startup_restore = preserved_entry.startup_restore;
@@ -183,8 +185,45 @@ void MediaHistoryManager::set_hwdec_enabled(const std::string &source,
         return;
 
     it->hwdec_enabled = enabled;
+    if (enabled) {
+        if (it->playback_mode < 0)
+            it->playback_mode = static_cast<int>(VideoPlaybackMode::NvdecMpv);
+    } else {
+        it->playback_mode = static_cast<int>(VideoPlaybackMode::SwMpv);
+    }
     if (resume_position_seconds >= 0)
         it->resume_position_seconds = resume_position_seconds;
+    files_window.sync_history(m_entries);
+    persist();
+}
+
+void MediaHistoryManager::set_playback_mode(const std::string &source,
+                                            int mode,
+                                            OpenedFilesWindow &files_window,
+                                            int resume_position_seconds)
+{
+    auto it = std::find_if(m_entries.begin(), m_entries.end(), [&source](const WindowStateToml::ImageHistoryEntry &entry) {
+        return entry.source == source;
+    });
+
+    if (it == m_entries.end())
+        return;
+
+    const int next_mode = sanitize_video_playback_mode(mode);
+    const bool next_hwdec = mode_uses_hwdec(next_mode);
+    const bool changed_mode = it->playback_mode != next_mode;
+    const bool changed_hwdec = it->hwdec_enabled != next_hwdec;
+    const bool changed_resume = resume_position_seconds >= 0 &&
+                                it->resume_position_seconds != resume_position_seconds;
+
+    if (!changed_mode && !changed_hwdec && !changed_resume)
+        return;
+
+    it->playback_mode = next_mode;
+    it->hwdec_enabled = next_hwdec;
+    if (resume_position_seconds >= 0)
+        it->resume_position_seconds = resume_position_seconds;
+
     files_window.sync_history(m_entries);
     persist();
 }

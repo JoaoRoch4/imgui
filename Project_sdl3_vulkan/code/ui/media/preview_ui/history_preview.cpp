@@ -13,7 +13,9 @@
 #include "Image_viewer_panel.hpp"
 #include "core/log/debug_log.hpp"
 #include "core/thread/thread_overwatch.hpp"
+#include "video_hover_preview.hpp"
 #include "video_player.hpp"
+#include "video_player_placebo.hpp"
 
 #include <curl/curl.h>
 
@@ -121,7 +123,9 @@ std::filesystem::path download_to_temp(const std::string &url) {
 HistoryPreview::HistoryPreview()
     : m_vk{nullptr}
     , m_video_player{nullptr}
+    , m_video_player_placebo{nullptr}
     , m_viewer{nullptr}
+    , m_use_video_player_placebo{false}
     , m_worker{}
     , m_worker_watch_id{0}
     , m_mutex{}
@@ -157,19 +161,24 @@ HistoryPreview::~HistoryPreview()
  */
 void HistoryPreview::setup(vulkan_context *vk,
                            VideoPlayer      *vp,
-                           ImageViewerPanel *viewer)
+                           ImageViewerPanel *viewer,
+                           VideoPlayerPlacebo *vpp,
+                           bool use_video_player_placebo)
 {
     shutdown(); // idempotent — resets any previous state first
 
     m_vk           = vk;
     m_video_player = vp;
+    m_video_player_placebo = vpp;
     m_viewer       = viewer;
+    m_use_video_player_placebo = use_video_player_placebo;
 
     // Reset all job / result state so no stale data leaks into the new session.
     m_has_pending_job  = false;
     m_has_ready_result = false;
     m_pending_job      = Job{};
     m_ready_result     = JobResult{};
+    m_saved_video_thumbnail_sources.clear();
 
     start_worker_thread(); // start the background download/existence-check loop
 }
@@ -198,6 +207,7 @@ void HistoryPreview::shutdown()
     // Reset result state so a subsequent setup() starts cleanly.
     m_has_ready_result = false;
     m_ready_result     = JobResult{};
+    m_saved_video_thumbnail_sources.clear();
     m_vk               = nullptr;
 }
 
@@ -458,14 +468,27 @@ ImVec2 HistoryPreview::clamp_tooltip_pos(ImVec2 mouse,
  */
 void HistoryPreview::draw_for_hover(WindowStateToml::ImageHistoryEntry &hentry)
 {
+    const auto has_video_backend = [this]() {
+        return m_use_video_player_placebo ? m_video_player_placebo != nullptr
+                                          : m_video_player != nullptr;
+    };
+    const auto is_video_path = [this](const std::filesystem::path &path) {
+        return m_use_video_player_placebo ? VideoPlayerPlacebo::is_video_path(path)
+                                          : VideoPlayer::is_video_path(path);
+    };
+    const auto is_video_url = [this](const std::string &url) {
+        return m_use_video_player_placebo ? VideoPlayerPlacebo::is_video_url(url)
+                                          : VideoPlayer::is_video_url(url);
+    };
+
     if (!m_vk)
         return; // Vulkan not ready — cannot upload or render any texture
 
     // Decide whether this entry is a video so we can choose the right thumbnail path.
-    const bool is_video = m_video_player != nullptr &&
+    const bool is_video = has_video_backend() &&
                           (hentry.kind == "file"
-                               ? VideoPlayer::is_video_path(std::filesystem::path(hentry.source))
-                               : VideoPlayer::is_video_url(hentry.source));
+                               ? is_video_path(std::filesystem::path(hentry.source))
+                               : is_video_url(hentry.source));
 
     // ------------------------------------------------------------------
     // Compute the clamped tooltip position before opening the window.
@@ -483,6 +506,32 @@ void HistoryPreview::draw_for_hover(WindowStateToml::ImageHistoryEntry &hentry)
     const ImVec2 mouse      = ImGui::GetMousePos();
     const ImVec2 tooltip_pos = clamp_tooltip_pos(mouse, expected_content);
 
+    if (is_video && has_video_backend()) {
+        // If hover preview is disabled globally, skip the tooltip entirely.
+        if (!VideoHoverPreview::enabled)
+            return;
+
+        // Determine the actual source we will look up (cached path or original).
+        const bool has_cached = !hentry.cached_path.empty() &&
+            std::filesystem::exists(std::filesystem::path(hentry.cached_path));
+        const std::string &lookup_src = has_cached ? hentry.cached_path : hentry.source;
+
+        // Tick the dwell timer so it counts down while no tooltip is shown.
+        if (m_use_video_player_placebo)
+            m_video_player_placebo->notify_hover(lookup_src);
+        else
+            m_video_player->notify_hover(lookup_src);
+
+        // Suppress the tooltip entirely while the hover dwell has not elapsed.
+        [[maybe_unused]] bool _ = m_use_video_player_placebo
+            ? m_video_player_placebo->consume_hover_popup_reopen_request()
+            : m_video_player->consume_hover_popup_reopen_request(); // drain the pulse
+        if (m_use_video_player_placebo
+                ? m_video_player_placebo->is_hover_dwell_pending(lookup_src)
+                : m_video_player->is_hover_dwell_pending(lookup_src))
+            return; // tooltip stays closed during the dwell window
+    }
+
     // Apply the clamped position — must be called before BeginTooltip().
     ImGui::SetNextWindowPos(tooltip_pos, ImGuiCond_Always);
     ImGui::BeginTooltip();
@@ -498,6 +547,9 @@ void HistoryPreview::draw_for_hover(WindowStateToml::ImageHistoryEntry &hentry)
     // ------------------------------------------------------------------
 
     if (is_video) {
+        if (!hentry.thumbnail_path.empty())
+            m_saved_video_thumbnail_sources.insert(hentry.source);
+
         // Prefer the cached local file when one is available; it avoids a
         // network round-trip and is more reliable for seeking.
         const bool has_cached_file =
@@ -508,9 +560,13 @@ void HistoryPreview::draw_for_hover(WindowStateToml::ImageHistoryEntry &hentry)
         // Ask the player for a live thumbnail.  get_open_thumbnail() returns the
         // descriptor of a window that is already playing; hover_thumbnail() uses
         // VideoHoverPreview for a lightweight seek-based preview.
-        VkDescriptorSet ds = m_video_player->get_open_thumbnail(lookup_src);
+        VkDescriptorSet ds = m_use_video_player_placebo
+            ? m_video_player_placebo->get_open_thumbnail(lookup_src)
+            : m_video_player->get_open_thumbnail(lookup_src);
         if (ds == VK_NULL_HANDLE)
-            ds = m_video_player->hover_thumbnail(lookup_src);
+            ds = m_use_video_player_placebo
+                ? m_video_player_placebo->hover_thumbnail(lookup_src)
+                : m_video_player->hover_thumbnail(lookup_src);
 
         if (ds != VK_NULL_HANDLE) {
             // Live frame available — render it.
@@ -518,7 +574,9 @@ void HistoryPreview::draw_for_hover(WindowStateToml::ImageHistoryEntry &hentry)
 
             // Opportunistically save this frame as a static thumbnail PNG so
             // that subsequent hovers can show something while the live preview loads.
-            if (hentry.thumbnail_path.empty() && !m_thumb_dir.empty()) {
+            const bool already_saved =
+                m_saved_video_thumbnail_sources.contains(hentry.source);
+            if (!already_saved && hentry.thumbnail_path.empty() && !m_thumb_dir.empty()) {
                 // FNV-1a hash of the source string used as the filename.
                 const auto fnv = [](const std::string &s) {
                     uint64_t h = 14695981039346656037ULL;
@@ -542,8 +600,11 @@ void HistoryPreview::draw_for_hover(WindowStateToml::ImageHistoryEntry &hentry)
                 }
 
                 APP_DEBUG_LOG("[HistoryPreview] trying save_hover_frame: {}", tp.string());
-                if (!ec && m_video_player->save_hover_frame(tp)) {
+                if (!ec && (m_use_video_player_placebo
+                                ? m_video_player_placebo->save_hover_frame(tp)
+                                : m_video_player->save_hover_frame(tp))) {
                     hentry.thumbnail_path = tp.string(); // persist the path in history
+                    m_saved_video_thumbnail_sources.insert(hentry.source);
                     APP_DEBUG_LOG("[HistoryPreview] thumbnail saved: {}", tp.string());
                 }
             }
@@ -574,6 +635,7 @@ void HistoryPreview::draw_for_hover(WindowStateToml::ImageHistoryEntry &hentry)
                     }
                 } else {
                     hentry.thumbnail_path.clear(); // stale path — reset so it regenerates
+                    m_saved_video_thumbnail_sources.erase(hentry.source);
                 }
             }
 
@@ -603,8 +665,8 @@ void HistoryPreview::draw_for_hover(WindowStateToml::ImageHistoryEntry &hentry)
 
         if (m_active_source == hentry.source && m_active_texture.is_loaded()) {
             // Scale to fit g_history_preview_max_size, but never upscale beyond 1:1.
-            const float src_w  = static_cast<float>(m_active_texture.width);
-            const float src_h  = static_cast<float>(m_active_texture.height);
+            const auto src_w  = static_cast<float>(m_active_texture.width);
+            const auto src_h  = static_cast<float>(m_active_texture.height);
             const float max_w  = g_history_preview_max_size.x;
             const float max_h  = g_history_preview_max_size.y;
             const float scale  = std::min(max_w / src_w, max_h / src_h);
@@ -619,6 +681,11 @@ void HistoryPreview::draw_for_hover(WindowStateToml::ImageHistoryEntry &hentry)
     // Timestamp footer shown for all entry types.
     ImGui::TextDisabled("%s", hentry.opened_at.c_str());
     ImGui::EndTooltip();
+}
+
+void HistoryPreview::set_use_video_player_placebo(bool enabled)
+{
+    m_use_video_player_placebo = enabled;
 }
 
 // ============================================================================

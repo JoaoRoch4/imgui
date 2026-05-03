@@ -2,6 +2,7 @@
 
 #include "core/log/debug_log.hpp"
 #include "image_downloader.hpp"
+#include "video_playback_mode.hpp"
 #include "video_player.hpp"
 
 #include <SDL3/SDL_dialog.h>
@@ -18,9 +19,9 @@ VideoContextMenu::VideoContextMenu()
     , m_copy_history_source{}
     , m_copy_dest{}
     , m_on_save_success{}
-    , m_can_toggle_hwdec{}
-    , m_is_hwdec_enabled{}
-    , m_on_toggle_hwdec{}
+    , m_can_set_playback_mode{}
+    , m_get_playback_mode{}
+    , m_on_set_playback_mode{}
 {
 }
 
@@ -35,29 +36,31 @@ void VideoContextMenu::set_on_save_success(
     m_on_save_success = std::move(cb);
 }
 
-void VideoContextMenu::set_hwdec_callbacks(std::function<bool(const std::string &)> can_toggle,
-                                           std::function<bool(const std::string &)> is_enabled,
-                                           std::function<void(const std::string &)> toggle)
+void VideoContextMenu::set_playback_mode_callbacks(std::function<bool(const std::string &)> can_set,
+                                                   std::function<int(const std::string &)> get_mode,
+                                                   std::function<void(const std::string &, int)> set_mode)
 {
-    m_can_toggle_hwdec = std::move(can_toggle);
-    m_is_hwdec_enabled = std::move(is_enabled);
-    m_on_toggle_hwdec = std::move(toggle);
+    m_can_set_playback_mode = std::move(can_set);
+    m_get_playback_mode = std::move(get_mode);
+    m_on_set_playback_mode = std::move(set_mode);
 }
 
-bool VideoContextMenu::can_toggle_hwdec(const std::string &source) const
+bool VideoContextMenu::can_set_playback_mode(const std::string &source) const
 {
-    return m_can_toggle_hwdec && m_can_toggle_hwdec(source);
+    return m_can_set_playback_mode && m_can_set_playback_mode(source);
 }
 
-bool VideoContextMenu::is_hwdec_enabled(const std::string &source) const
+int VideoContextMenu::get_playback_mode(const std::string &source) const
 {
-    return m_is_hwdec_enabled && m_is_hwdec_enabled(source);
+    if (!m_get_playback_mode)
+        return static_cast<int>(VideoPlaybackMode::SwMpv);
+    return sanitize_video_playback_mode(m_get_playback_mode(source));
 }
 
-void VideoContextMenu::toggle_hwdec(const std::string &source) const
+void VideoContextMenu::set_playback_mode(const std::string &source, int mode) const
 {
-    if (m_on_toggle_hwdec)
-        m_on_toggle_hwdec(source);
+    if (m_on_set_playback_mode)
+        m_on_set_playback_mode(source, sanitize_video_playback_mode(mode));
 }
 
 // ---------------------------------------------------------------------------
@@ -145,17 +148,22 @@ static VideoContextMenu::Result draw_menu_body(
     if (!can_save)
         ImGui::EndDisabled();
 
-    const bool can_toggle_hwdec = self->can_toggle_hwdec(entry.source);
-    if (!can_toggle_hwdec)
+    const bool can_set_playback_mode = self->can_set_playback_mode(entry.source);
+    if (!can_set_playback_mode)
         ImGui::BeginDisabled();
 
-    const bool hwdec_enabled = self->is_hwdec_enabled(entry.source);
-    if (ImGui::MenuItem("Use Hardware Decode", nullptr, hwdec_enabled)) {
-        result.toggle_hwdec = true;
-        self->toggle_hwdec(entry.source);
+    int playback_mode = self->get_playback_mode(entry.source);
+    ImGui::SetNextItemWidth(180.0f);
+    if (ImGui::Combo("Playback mode##ctx_playback_mode",
+                     &playback_mode,
+                     k_video_playback_mode_items.data(),
+                     static_cast<int>(k_video_playback_mode_items.size()))) {
+        result.playback_mode_changed = true;
+        result.playback_mode = sanitize_video_playback_mode(playback_mode);
+        self->set_playback_mode(entry.source, result.playback_mode);
     }
 
-    if (!can_toggle_hwdec)
+    if (!can_set_playback_mode)
         ImGui::EndDisabled();
 
     ImGui::Separator();

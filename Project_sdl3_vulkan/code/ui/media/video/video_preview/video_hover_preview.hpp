@@ -9,9 +9,23 @@ public:
     static inline ImVec2 preview_size = {320, 180};
     static constexpr size_t max_cache_size = 32;
 
-    /// Minimum time the cursor must dwell on one item before a load is triggered.
-    /// Keeps mpv idle while the user sweeps quickly through a long history list.
-    static constexpr std::chrono::milliseconds hover_delay{150};
+    /// Runtime-mutable: enable/disable the hover preview popup entirely.
+    static inline bool enabled = true;
+
+    /// Runtime-mutable: dwell time before the popup appears and mpv starts loading.
+    static inline std::chrono::milliseconds hover_delay{800};
+
+    /// Kill the worker thread when no hover requests arrive for this interval.
+    static constexpr std::chrono::milliseconds idle_thread_timeout{1500};
+
+    /// If preview loading stays stuck longer than this, restart hover thread.
+    static constexpr std::chrono::milliseconds loading_restart_timeout{800};
+
+    /// Prevent rapid restart loops when a source is persistently broken.
+    static constexpr std::chrono::milliseconds loading_restart_cooldown{1200};
+
+    /// If a hovered/playing source has no decoded frame for too long, force recovery.
+    static constexpr std::chrono::milliseconds no_frame_restart_timeout{800};
 
     VideoHoverPreview();
     ~VideoHoverPreview();
@@ -20,7 +34,11 @@ public:
     void shutdown();
 
     VkDescriptorSet thumbnail(const std::string &source);
+    void notify_hover(const std::string &source);
     bool save_frame(const std::filesystem::path &path);
+    void tick_idle();
+    bool consume_popup_reopen_request();
+    [[nodiscard]] bool is_hover_dwell_pending(const std::string &source) const;
 
     struct GpuSlot {
         VkImage image{};
@@ -64,6 +82,12 @@ private:
     std::string m_current;
     std::string m_playing;
     std::chrono::steady_clock::time_point m_last_load_time{};
+    std::chrono::steady_clock::time_point m_last_use_time{};
+    std::chrono::steady_clock::time_point m_last_restart_time{};
+    bool m_has_first_preview_frame{false};
+    uint64_t m_watchdog_restart_count{0};
+    uint64_t m_idle_stop_count{0};
+    std::string m_last_restart_source;
 
     // ---- Hover-dwell delay --------------------------------------------------
     /// The source string that the cursor is currently resting on.
@@ -82,6 +106,7 @@ private:
     std::atomic<bool> m_waiting{false};
     std::atomic<bool> m_upload_pending{false};
     std::atomic<uint64_t> m_thread_watch_id{0};
+    std::atomic<bool> m_popup_reopen_requested{false};
 
     std::jthread m_thread;
 

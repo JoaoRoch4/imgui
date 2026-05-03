@@ -42,6 +42,11 @@ public:
                            OpenedFilesWindow &files_window,
                            int resume_position_seconds = -1);
 
+    void set_playback_mode(const std::string &source,
+                           int mode,
+                           OpenedFilesWindow &files_window,
+                           int resume_position_seconds = -1);
+
     void erase(const std::string &source, OpenedFilesWindow &files_window);
     void clear(OpenedFilesWindow &files_window);
 

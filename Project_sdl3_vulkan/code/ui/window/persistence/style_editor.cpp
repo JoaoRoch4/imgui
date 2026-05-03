@@ -13,15 +13,15 @@ WindowStateToml::Vec2Toml ToToml(const ImVec2 &value) {
   return result;
 }
 
-WindowStateToml::Vec4Toml ToToml(const ImVec4 &value) { // NOLINT
+// WindowStateToml::Vec4Toml ToToml(const ImVec4 &value) { // NOLINT
 
-  WindowStateToml::Vec4Toml result{};
-  result.x = value.x;
-  result.y = value.y;
-  result.z = value.z;
-  result.w = value.w;
-  return result;
-}
+//   WindowStateToml::Vec4Toml result{};
+//   result.x = value.x;
+//   result.y = value.y;
+//   result.z = value.z;
+//   result.w = value.w;
+//   return result;
+// }
 
 WindowStateToml::ColorToml ColorToToml(const ImVec4 &value) {
   auto clamp = [](float v) {
@@ -41,16 +41,20 @@ ImVec2 FromToml(const WindowStateToml::Vec2Toml &value) {
   return {value.x, value.y};
 }
 
-ImVec4
-FromToml(const WindowStateToml::Vec4Toml
-             &value) // NOLINT(readability-convert-member-functions-to-static)
-{
-  return {value.x, value.y, value.z, value.w};
-}
+// ImVec4
+// FromToml(const WindowStateToml::Vec4Toml
+//              &value) // NOLINT(readability-convert-member-functions-to-static)
+// {
+//   return {value.x, value.y, value.z, value.w};
+// }
 
 ImVec4 ColorFromToml(const WindowStateToml::ColorToml &value) {
-  return {value.r / 255.0f, value.g / 255.0f, value.b / 255.0f,
-          value.a / 255.0f}; // NOLINT
+
+  const float r = static_cast<float>(value.r) / 255.0f;
+  const float g = static_cast<float>(value.g) / 255.0f;
+  const float b = static_cast<float>(value.b) / 255.0f;
+  const float a = static_cast<float>(value.a) / 255.0f;
+  return {r, g, b, a};
 }
 
 bool HasPersistedStyle(const WindowStateToml::StyleToml &style) {

@@ -78,8 +78,20 @@ std::string FieldCommentFor(const std::string &section_name,
   if (key == "video_resume_persist_min_duration_seconds")
     return "# Only save resume_position_seconds for media at or above this "
            "duration.";
+  if (key == "file_explorer_last_directory")
+    return "# Last folder opened in File Explorer.";
+  if (key == "file_explorer_sort_mode")
+    return "# File Explorer sort mode index: 0=NameAsc, 1=NameDesc, 2=Type, "
+           "3=SizeDesc, 4=DateDesc.";
+  if (key == "file_explorer_recent_directories")
+    return "# Recently accessed folders used by File Explorer combo "
+           "(newest first).";
+  if (key == "global_video_playback_mode")
+    return "# Global video playback mode: 0=SW MPV, 1=NVDEC MPV, 2=NVDEC libplacebo.";
   if (key == "hwdec_enabled")
     return "# Reopen this video with mpv hardware decoding enabled.";
+  if (key == "playback_mode")
+    return "# Per-entry playback mode: -1=derive from hwdec_enabled, 0=SW MPV, 1=NVDEC MPV, 2=NVDEC libplacebo.";
   if (key == "resume_position_seconds")
     return "# Resume playback position in whole seconds.";
 
@@ -155,7 +167,7 @@ void AnnotateWindowStateToml(const std::filesystem::path &file_path) {
 
   std::vector<std::string> annotated;
   annotated.reserve(lines.size() * 2 + 8);
-  annotated.push_back("# SDL3+Vulkan ImGui persisted state (auto-generated). "
+  annotated.emplace_back("# SDL3+Vulkan ImGui persisted state (auto-generated). "
                       "Manual edits are allowed.");
 
   for (const std::string &current : lines) {

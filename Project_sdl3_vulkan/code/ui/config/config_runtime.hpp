@@ -45,6 +45,18 @@ public:
 
     [[nodiscard]] int VideoResumeThresholdSeconds() const;
 
+    /// Register a callback invoked when hover preview enabled/delay changes.
+    void SetHoverPreviewChangedCallback(std::function<void(bool, int)> cb);
+
+    /// Register a callback invoked when global playback mode or loop changes (mode, loop).
+    void SetVideoPlaybackChangedCallback(std::function<void(int mode, bool loop)> cb);
+
+    /// Register a callback invoked when VSync changes.
+    void SetVsyncChangedCallback(std::function<void(bool enabled)> cb);
+
+    /// Register a callback invoked when "Restart All Threads" is clicked.
+    void SetRestartAllThreadsCallback(std::function<void()> cb);
+
 private:
     ImVec2 m_pending_hover_size;
     ImVec2 m_pending_seek_size;
@@ -59,4 +71,13 @@ private:
     std::function<void()> m_on_delete_all_cache_and_state;
     std::function<void()> m_on_reopen_app;
     std::function<void(int)> m_on_video_resume_threshold_changed;
+    bool m_pending_hover_preview_enabled;
+    int  m_pending_hover_preview_delay_ms;
+    std::function<void(bool, int)> m_on_hover_preview_changed;
+    int m_pending_global_playback_mode;
+    bool m_pending_global_loop_enabled;
+    std::function<void(int, bool)> m_on_video_playback_changed;
+    bool m_pending_vsync_enabled;
+    std::function<void(bool)> m_on_vsync_changed;
+    std::function<void()> m_on_restart_all_threads;
 };

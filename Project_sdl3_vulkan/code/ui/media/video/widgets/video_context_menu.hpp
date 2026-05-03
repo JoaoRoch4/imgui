@@ -1,8 +1,6 @@
 #pragma once
 
-#include <filesystem>
-#include <functional>
-#include <string>
+#include "pch.hpp"
 
 #include "window_state_toml.hpp"
 
@@ -24,7 +22,8 @@ public:
         bool        erase           = false;
         std::string erase_source;
         bool        restart_preview = false;
-        bool        toggle_hwdec    = false;
+        bool        playback_mode_changed = false;
+        int         playback_mode   = 0;
     };
 
     VideoContextMenu();
@@ -39,13 +38,13 @@ public:
     void set_on_save_success(
         std::function<void(const std::string &, const std::filesystem::path &)> cb);
 
-    void set_hwdec_callbacks(std::function<bool(const std::string &)> can_toggle,
-                             std::function<bool(const std::string &)> is_enabled,
-                             std::function<void(const std::string &)> toggle);
+    void set_playback_mode_callbacks(std::function<bool(const std::string &)> can_set,
+                                     std::function<int(const std::string &)> get_mode,
+                                     std::function<void(const std::string &, int)> set_mode);
 
-    [[nodiscard]] bool can_toggle_hwdec(const std::string &source) const;
-    [[nodiscard]] bool is_hwdec_enabled(const std::string &source) const;
-    void toggle_hwdec(const std::string &source) const;
+    [[nodiscard]] bool can_set_playback_mode(const std::string &source) const;
+    [[nodiscard]] int get_playback_mode(const std::string &source) const;
+    void set_playback_mode(const std::string &source, int mode) const;
 
     /// Attach a context menu popup to the last rendered ImGui item.
     ///
@@ -89,7 +88,7 @@ private:
     std::filesystem::path m_copy_dest;
 
     std::function<void(const std::string &, const std::filesystem::path &)> m_on_save_success;
-    std::function<bool(const std::string &)> m_can_toggle_hwdec;
-    std::function<bool(const std::string &)> m_is_hwdec_enabled;
-    std::function<void(const std::string &)> m_on_toggle_hwdec;
+    std::function<bool(const std::string &)> m_can_set_playback_mode;
+    std::function<int(const std::string &)> m_get_playback_mode;
+    std::function<void(const std::string &, int)> m_on_set_playback_mode;
 };

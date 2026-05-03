@@ -23,6 +23,10 @@ public:
     VkQueue queue;
     VkPipelineCache pipeline_cache;
     VkDescriptorPool descriptor_pool;
+    VkBuffer vram_reserve_buffer;
+    VkDeviceMemory vram_reserve_memory;
+    VkDeviceSize vram_reserve_bytes;
+    bool vram_reserve_active;
 
     ImGui_ImplVulkanH_Window main_window_data;
     uint32_t min_image_count;

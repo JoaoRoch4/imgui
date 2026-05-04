@@ -22,6 +22,8 @@ VideoContextMenu::VideoContextMenu()
     , m_can_set_playback_mode{}
     , m_get_playback_mode{}
     , m_on_set_playback_mode{}
+    , m_get_vsync{}
+    , m_set_vsync{}
 {
 }
 
@@ -44,6 +46,17 @@ void VideoContextMenu::set_playback_mode_callbacks(std::function<bool(const std:
     m_get_playback_mode = std::move(get_mode);
     m_on_set_playback_mode = std::move(set_mode);
 }
+
+void VideoContextMenu::set_vsync_callbacks(std::function<bool()> get_vsync,
+                                           std::function<void(bool)> set_vsync)
+{
+    m_get_vsync = std::move(get_vsync);
+    m_set_vsync = std::move(set_vsync);
+}
+
+bool VideoContextMenu::has_vsync_control() const { return m_get_vsync && m_set_vsync; }
+bool VideoContextMenu::vsync_enabled() const     { return m_get_vsync ? m_get_vsync() : false; }
+void VideoContextMenu::apply_vsync(bool enabled) const { if (m_set_vsync) m_set_vsync(enabled); }
 
 bool VideoContextMenu::can_set_playback_mode(const std::string &source) const
 {
@@ -166,9 +179,21 @@ static VideoContextMenu::Result draw_menu_body(
     if (!can_set_playback_mode)
         ImGui::EndDisabled();
 
+    // ----- VSync toggle --------------------------------------------------
+    if (self->has_vsync_control()) {
+        ImGui::Separator();
+        bool vsync = self->vsync_enabled();
+        if (ImGui::Checkbox("VSync", &vsync))
+            self->apply_vsync(vsync);
+    }
+
     ImGui::Separator();
     if (ImGui::MenuItem("Restart Preview Thread"))
         result.restart_preview = true;
+
+    ImGui::Separator();
+    if (ImGui::MenuItem("Quit App"))
+        result.quit = true;
 
     return result;
 }

@@ -37,6 +37,9 @@ public:
                                    std::function<void()> on_fix_videos,
                                    std::function<bool()> is_startup_videos_fixed = nullptr);
 
+    /// Register a callback invoked when the user selects "Quit App".
+    void SetQuitCallback(std::function<void()> cb);
+
     std::optional<WindowStateToml::ImageHistoryEntry> draw(const ImageViewerPanel &viewer,
                                                             HistoryPreview &preview,
                                                             int *focus_id,
@@ -54,4 +57,5 @@ private:
     std::function<void()>                    m_on_open_online;
     std::function<void()>                    m_on_fix_videos;
     std::function<bool()>                    m_is_startup_videos_fixed;
+    std::function<void()>                    m_on_quit;
 };

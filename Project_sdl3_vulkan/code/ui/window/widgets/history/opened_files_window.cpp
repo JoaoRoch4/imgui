@@ -74,6 +74,10 @@ void OpenedFilesWindow::SetMenuShortcutsCallbacks(std::function<void()> on_open_
     m_is_startup_videos_fixed = std::move(is_startup_videos_fixed);
 }
 
+void OpenedFilesWindow::SetQuitCallback(std::function<void()> cb) {
+    m_on_quit = std::move(cb);
+}
+
 std::optional<WindowStateToml::ImageHistoryEntry> OpenedFilesWindow::draw(const ImageViewerPanel &viewer,
                                                                           HistoryPreview &preview,
                                                                           int *focus_id,
@@ -177,11 +181,13 @@ std::optional<WindowStateToml::ImageHistoryEntry> OpenedFilesWindow::draw(const 
                     const bool is_video = VideoPlayer::is_video_path(hentry.source) ||
                                           VideoPlayer::is_video_url(hentry.source);
                     if (is_video && video_ctx) {
-                        if (const auto r = video_ctx->draw_for_item(hentry); r.erase || r.restart_preview) {
+                        if (const auto r = video_ctx->draw_for_item(hentry); r.erase || r.restart_preview || r.quit) {
                             if (r.erase && m_on_erase_entry)
                                 m_on_erase_entry(r.erase_source);
                             if (r.restart_preview && m_on_restart_preview)
                                 m_on_restart_preview();
+                            if (r.quit && m_on_quit)
+                                m_on_quit();
                         }
                     } else {
                         if (const auto erase = HistoryContextMenu::draw_for_item(hentry.source))
@@ -218,11 +224,13 @@ std::optional<WindowStateToml::ImageHistoryEntry> OpenedFilesWindow::draw(const 
                 const bool is_video_file = VideoPlayer::is_video_path(file.source) ||
                                            VideoPlayer::is_video_url(file.source);
                 if (is_video_file && video_ctx && it != m_history.end()) {
-                    if (const auto r = video_ctx->draw_for_item(*it); r.erase || r.restart_preview) {
+                    if (const auto r = video_ctx->draw_for_item(*it); r.erase || r.restart_preview || r.quit) {
                         if (r.erase && m_on_erase_entry)
                             m_on_erase_entry(r.erase_source);
                         if (r.restart_preview && m_on_restart_preview)
                             m_on_restart_preview();
+                        if (r.quit && m_on_quit)
+                            m_on_quit();
                     }
                 } else {
                     if (const auto erase = HistoryContextMenu::draw_for_item(file.source))

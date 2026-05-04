@@ -194,6 +194,9 @@ void MainMenuBar::Setup(StyleEditor *style_editor, SDL_Window *window,
         m_video_player->set_all_hwdec(next_hwdec);
         m_video_player_placebo->set_all_hwdec(next_hwdec);
       });
+  m_video_context_menu->set_vsync_callbacks(
+      [this]() { return m_config_runtime->VsyncEnabled(); },
+      [this](bool enabled) { m_config_runtime->SetVsyncEnabled(enabled); });
   m_history_preview->setup(m_vk, m_video_player.get(), m_viewer.get(),
                            m_video_player_placebo.get(), m_use_video_player_placebo);
 
@@ -332,6 +335,8 @@ void MainMenuBar::Setup(StyleEditor *style_editor, SDL_Window *window,
                                        : m_video_player->open_sources();
         return m_app_state->are_all_startup_videos_fixed(open_sources);
       });
+
+  m_opened_files_window->SetQuitCallback([this]() { request_quit = true; });
 
   m_load_handler->setup(m_viewer.get(), m_video_player.get(),
                         m_video_player_placebo.get(),
@@ -527,7 +532,9 @@ void MainMenuBar::Build() {
                     if (is_video) {
                       if (const auto r =
                               m_video_context_menu->draw_for_item(entry);
-                          r.erase || r.restart_preview) {
+                          r.erase || r.restart_preview || r.quit) {
+                        if (r.quit)
+                          request_quit = true;
                         if (r.restart_preview) {
                           if (m_use_video_player_placebo)
                             m_video_player_placebo->restart_hover_preview();

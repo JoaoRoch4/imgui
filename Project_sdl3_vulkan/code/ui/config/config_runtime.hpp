@@ -55,6 +55,12 @@ public:
     /// Register a callback invoked when VSync changes.
     void SetVsyncChangedCallback(std::function<void(bool enabled)> cb);
 
+    /// Returns the current pending VSync state.
+    [[nodiscard]] bool VsyncEnabled() const;
+
+    /// Toggle VSync programmatically (fires the VSync changed callback).
+    void SetVsyncEnabled(bool enabled);
+
     /// Register a callback invoked when "Restart All Threads" is clicked.
     void SetRestartAllThreadsCallback(std::function<void()> cb);
 

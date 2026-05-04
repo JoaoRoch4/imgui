@@ -118,6 +118,16 @@ void ConfigRuntime::SetVsyncChangedCallback(std::function<void(bool)> cb) {
   m_on_vsync_changed = std::move(cb);
 }
 
+bool ConfigRuntime::VsyncEnabled() const {
+  return m_pending_vsync_enabled;
+}
+
+void ConfigRuntime::SetVsyncEnabled(bool enabled) {
+  m_pending_vsync_enabled = enabled;
+  if (m_on_vsync_changed)
+    m_on_vsync_changed(m_pending_vsync_enabled);
+}
+
 void ConfigRuntime::SetRestartAllThreadsCallback(std::function<void()> cb) {
   m_on_restart_all_threads = std::move(cb);
 }

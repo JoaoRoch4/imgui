@@ -10,6 +10,9 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <dlfcn.h>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <unordered_map>
 
@@ -64,9 +67,129 @@ void draw_open_shortcuts(const std::string &source,
     draw_recent_menu(callbacks);
 }
 
+// ---------------------------------------------------------------------------
+// CPU / GPU usage helpers
+// ---------------------------------------------------------------------------
+
+struct CpuTimes { unsigned long long idle = 0, total = 0; };
+
+static CpuTimes read_cpu_times()
+{
+    std::ifstream f("/proc/stat");
+    std::string tag;
+    unsigned long long u, n, s, i, wa, irq, si, steal;
+    f >> tag >> u >> n >> s >> i >> wa >> irq >> si >> steal;
+    CpuTimes t;
+    t.idle  = i + wa;
+    t.total = u + n + s + i + wa + irq + si + steal;
+    return t;
+}
+
+// Returns 0-100 CPU usage between two snapshots.
+static int cpu_usage_pct(const CpuTimes &a, const CpuTimes &b)
+{
+    const unsigned long long dt = b.total - a.total;
+    if (dt == 0) return 0;
+    const unsigned long long di = b.idle  - a.idle;
+    return static_cast<int>(100ULL * (dt - di) / dt);
+}
+
+struct GpuStats { int util_pct = -1; int64_t vram_used_mb = -1; int64_t vram_total_mb = -1; };
+
+// Try NVML via dlopen; return false if unavailable.
+static bool query_gpu_nvml(GpuStats &out)
+{
+    using nvmlReturn_t = int;
+    using nvmlDevice_t = void *;
+    struct nvmlUtilization_t { unsigned int gpu; unsigned int memory; };
+    struct nvmlMemory_t { unsigned long long total; unsigned long long free; unsigned long long used; };
+
+    static void *lib = nullptr;
+    static bool tried = false;
+    if (!tried) {
+        tried = true;
+        lib = dlopen("libnvidia-ml.so.1", RTLD_LAZY | RTLD_LOCAL);
+        if (!lib) lib = dlopen("libnvidia-ml.so", RTLD_LAZY | RTLD_LOCAL);
+        if (lib) {
+            auto init = reinterpret_cast<nvmlReturn_t(*)()>(dlsym(lib, "nvmlInit_v2"));
+            if (!init) init = reinterpret_cast<nvmlReturn_t(*)()>(dlsym(lib, "nvmlInit"));
+            if (init) init();
+        }
+    }
+    if (!lib) return false;
+
+    auto getHandle = reinterpret_cast<nvmlReturn_t(*)(unsigned int, nvmlDevice_t *)>(
+        dlsym(lib, "nvmlDeviceGetHandleByIndex_v2"));
+    auto getUtil   = reinterpret_cast<nvmlReturn_t(*)(nvmlDevice_t, nvmlUtilization_t *)>(
+        dlsym(lib, "nvmlDeviceGetUtilizationRates"));
+    auto getMem    = reinterpret_cast<nvmlReturn_t(*)(nvmlDevice_t, nvmlMemory_t *)>(
+        dlsym(lib, "nvmlDeviceGetMemoryInfo"));
+    if (!getHandle || !getUtil || !getMem) return false;
+
+    nvmlDevice_t dev = nullptr;
+    if (getHandle(0, &dev) != 0 || !dev) return false;
+
+    nvmlUtilization_t util{};
+    if (getUtil(dev, &util) == 0) out.util_pct = static_cast<int>(util.gpu);
+
+    nvmlMemory_t mem{};
+    if (getMem(dev, &mem) == 0) {
+        out.vram_used_mb  = static_cast<int64_t>(mem.used  / (1024 * 1024));
+        out.vram_total_mb = static_cast<int64_t>(mem.total / (1024 * 1024));
+    }
+    return out.util_pct >= 0;
+}
+
+// Fallback: read GPU utilisation from sysfs (amdgpu / radeon).
+static bool query_gpu_sysfs(GpuStats &out)
+{
+    namespace fs = std::filesystem;
+    static std::string s_util_path, s_vram_used_path, s_vram_total_path;
+    static bool s_scanned = false;
+    if (!s_scanned) {
+        s_scanned = true;
+        std::error_code ec;
+        for (const auto &entry : fs::directory_iterator("/sys/class/drm", ec)) {
+            const auto name = entry.path().filename().string();
+            if (name.rfind("card", 0) != 0 || name.find('-') != std::string::npos)
+                continue;
+            const auto base = entry.path() / "device";
+            const auto u    = base / "gpu_busy_percent";
+            if (fs::exists(u, ec)) {
+                s_util_path        = u.string();
+                s_vram_used_path   = (base / "mem_info_vram_used").string();
+                s_vram_total_path  = (base / "mem_info_vram_total").string();
+                break;
+            }
+        }
+    }
+    if (s_util_path.empty()) return false;
+
+    auto read_int = [](const std::string &path, int64_t &val) {
+        std::ifstream f(path);
+        return static_cast<bool>(f >> val);
+    };
+    int64_t util = -1, vram_used = -1, vram_total = -1;
+    if (!read_int(s_util_path, util)) return false;
+    out.util_pct = static_cast<int>(util);
+    read_int(s_vram_used_path,  vram_used);
+    read_int(s_vram_total_path, vram_total);
+    if (vram_used  >= 0) out.vram_used_mb  = vram_used  / (1024 * 1024);
+    if (vram_total >= 0) out.vram_total_mb = vram_total / (1024 * 1024);
+    return true;
+}
+
+static GpuStats query_gpu()
+{
+    GpuStats g;
+    if (!query_gpu_nvml(g)) query_gpu_sysfs(g);
+    return g;
+}
+
 struct StatsCache {
     std::chrono::steady_clock::time_point next_sample;
-    std::array<std::string, 4> lines;
+    std::array<std::string, 12> lines;
+    CpuTimes last_cpu_times{};
     // Pre-computed every time lines are refreshed, reused every frame.
     float box_w = 0.0f;
     float box_h = 0.0f;
@@ -89,11 +212,36 @@ void draw_stats_overlay(mpv_handle *mpv, ImVec2 image_pos, ImVec2 display_size)
         int64_t audio_bitrate = 0;
         int64_t frame_drop    = 0;
         int64_t mistimed      = 0;
-        mpv_get_property(mpv, "video-bitrate",        MPV_FORMAT_INT64, &video_bitrate);
-        mpv_get_property(mpv, "audio-bitrate",        MPV_FORMAT_INT64, &audio_bitrate);
-        mpv_get_property(mpv, "frame-drop-count",     MPV_FORMAT_INT64, &frame_drop);
-        mpv_get_property(mpv, "mistimed-frame-count", MPV_FORMAT_INT64, &mistimed);
+        int64_t width         = 0;
+        int64_t height        = 0;
+        double  fps           = 0.0;
+        double  duration      = 0.0;
+        double  file_size     = 0.0;
+        mpv_get_property(mpv, "video-bitrate",        MPV_FORMAT_INT64,  &video_bitrate);
+        mpv_get_property(mpv, "audio-bitrate",        MPV_FORMAT_INT64,  &audio_bitrate);
+        mpv_get_property(mpv, "frame-drop-count",     MPV_FORMAT_INT64,  &frame_drop);
+        mpv_get_property(mpv, "mistimed-frame-count", MPV_FORMAT_INT64,  &mistimed);
+        mpv_get_property(mpv, "width",                MPV_FORMAT_INT64,  &width);
+        mpv_get_property(mpv, "height",               MPV_FORMAT_INT64,  &height);
+        mpv_get_property(mpv, "container-fps",        MPV_FORMAT_DOUBLE, &fps);
+        mpv_get_property(mpv, "duration",             MPV_FORMAT_DOUBLE, &duration);
+        mpv_get_property(mpv, "file-size",            MPV_FORMAT_DOUBLE, &file_size);
 
+        char *video_codec   = nullptr;
+        char *hwdec_current = nullptr;
+        mpv_get_property(mpv, "video-codec",    MPV_FORMAT_STRING, &video_codec);
+        mpv_get_property(mpv, "hwdec-current",  MPV_FORMAT_STRING, &hwdec_current);
+        std::string decoder_str = "Decoder:  ";
+        decoder_str += (video_codec && video_codec[0]) ? video_codec : "?";
+        if (hwdec_current && hwdec_current[0]) {
+            decoder_str += " (";
+            decoder_str += hwdec_current;
+            decoder_str += ')';
+        }
+        if (video_codec)   mpv_free(video_codec);
+        if (hwdec_current) mpv_free(hwdec_current);
+
+        // Format helpers
         auto format_bps = [](int64_t bps) -> std::string {
             std::array<char, 32> buf{};
             if (bps >= 1'000'000)
@@ -104,12 +252,55 @@ void draw_stats_overlay(mpv_handle *mpv, ImVec2 image_pos, ImVec2 display_size)
                               static_cast<long long>(bps / 1000));
             return std::string(buf.data());
         };
+        auto format_duration = [](double secs) -> std::string {
+            if (secs <= 0.0) return "?";
+            const int h = static_cast<int>(secs) / 3600;
+            const int m = (static_cast<int>(secs) % 3600) / 60;
+            const int s = static_cast<int>(secs) % 60;
+            std::array<char, 16> buf{};
+            if (h > 0)
+                std::snprintf(buf.data(), buf.size(), "%d:%02d:%02d", h, m, s);
+            else
+                std::snprintf(buf.data(), buf.size(), "%d:%02d", m, s);
+            return std::string(buf.data());
+        };
+        auto format_size = [](double bytes) -> std::string {
+            std::array<char, 32> buf{};
+            if (bytes >= 1073741824.0)
+                std::snprintf(buf.data(), buf.size(), "%.2f GiB", bytes / 1073741824.0);
+            else if (bytes >= 1048576.0)
+                std::snprintf(buf.data(), buf.size(), "%.1f MiB", bytes / 1048576.0);
+            else
+                std::snprintf(buf.data(), buf.size(), "%.0f KiB", bytes / 1024.0);
+            return std::string(buf.data());
+        };
+
+        std::string res_str = "Resolution: ";
+        if (width > 0 && height > 0)
+            res_str += std::to_string(width) + "x" + std::to_string(height);
+        else
+            res_str += "?";
+
+        std::string fps_str = "FPS:        ";
+        if (fps > 0.0) {
+            std::array<char, 16> buf{};
+            std::snprintf(buf.data(), buf.size(), "%.2f", fps);
+            fps_str += buf.data();
+        } else { fps_str += "?"; }
+
+        const int64_t total_bitrate = video_bitrate + audio_bitrate;
 
         cache.lines = {
+            std::move(res_str),
+            std::move(fps_str),
+            "Duration: " + format_duration(duration),
+            "Size:     " + (file_size > 0.0 ? format_size(file_size) : std::string("?")),
+            "Total BR: " + format_bps(total_bitrate),
             "Video:    " + format_bps(video_bitrate),
             "Audio:    " + format_bps(audio_bitrate),
             "Dropped:  " + std::to_string(frame_drop),
             "Mistimed: " + std::to_string(mistimed),
+            std::move(decoder_str),
         };
 
         // Recompute box dimensions only when content changes (every 500 ms),

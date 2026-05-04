@@ -24,6 +24,7 @@ public:
         bool        restart_preview = false;
         bool        playback_mode_changed = false;
         int         playback_mode   = 0;
+        bool        quit            = false;
     };
 
     VideoContextMenu();
@@ -42,9 +43,16 @@ public:
                                      std::function<int(const std::string &)> get_mode,
                                      std::function<void(const std::string &, int)> set_mode);
 
+    void set_vsync_callbacks(std::function<bool()> get_vsync,
+                             std::function<void(bool)> set_vsync);
+
     [[nodiscard]] bool can_set_playback_mode(const std::string &source) const;
     [[nodiscard]] int get_playback_mode(const std::string &source) const;
     void set_playback_mode(const std::string &source, int mode) const;
+
+    [[nodiscard]] bool has_vsync_control() const;
+    [[nodiscard]] bool vsync_enabled() const;
+    void apply_vsync(bool enabled) const;
 
     /// Attach a context menu popup to the last rendered ImGui item.
     ///
@@ -91,4 +99,6 @@ private:
     std::function<bool(const std::string &)> m_can_set_playback_mode;
     std::function<int(const std::string &)> m_get_playback_mode;
     std::function<void(const std::string &, int)> m_on_set_playback_mode;
+    std::function<bool()> m_get_vsync;
+    std::function<void(bool)> m_set_vsync;
 };

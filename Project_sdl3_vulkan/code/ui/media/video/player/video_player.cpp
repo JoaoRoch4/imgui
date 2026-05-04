@@ -31,6 +31,130 @@ using std::move;
 
 namespace {
 
+    // ============================================================================
+// Linux system-info helpers (OSD)
+// ============================================================================
+
+/**
+ * @brief Reads the CPU model name from the Linux kernel's /proc/cpuinfo.
+ *
+ * Iterates lines looking for the "model name" key.  Only the first occurrence
+ * (physical socket 0, logical core 0) is returned; for multi-socket machines
+ * the first socket's label is representative enough for an OSD string.
+ *
+ * If the file cannot be opened, or the key is absent (unlikely on any x86-64
+ * Linux), the function returns the literal string "Unknown CPU" so callers
+ * never receive an empty string.
+ *
+ * @return A trimmed string such as "Intel(R) Core(TM) i7-7700 CPU @ 3.60GHz".
+ */
+[[nodiscard]] static std::string read_cpu_name_linux()
+{
+    // Open the virtual file exposed by the kernel for CPU topology.
+    std::ifstream f("/proc/cpuinfo");
+    if (!f.is_open())
+        return "Unknown CPU";                                                      // file not available
+
+    std::string line;
+    while (std::getline(f, line)) {
+        // The "model name" key appears once per logical core; grab the first hit.
+        if (!line.starts_with("model name"))
+            continue;
+
+        const std::size_t colon = line.find(':');                                  // find the separator
+        if (colon == std::string::npos)
+            continue;                                                               // malformed line — skip
+
+        // Skip ": " (colon + space) to get the bare model string.
+        std::string name = line.substr(colon + 2);
+
+        // Trim any trailing whitespace or carriage-return left by the kernel.
+        while (!name.empty() && (name.back() == ' ' || name.back() == '\r'))
+            name.pop_back();
+
+        return name;                                                               // first occurrence is enough
+    }
+    return "Unknown CPU";                                                          // key not found
+}
+
+/**
+ * @brief Reads the GPU model name from the NVIDIA kernel driver's sysfs tree
+ *        or, as a fallback, from the DRM subsystem's device name file.
+ *
+ * Primary path — NVIDIA proprietary driver:
+ *   /proc/driver/nvidia/gpus/<PCI-address>/information
+ *   Looks for the line beginning with "Model:" and returns its value.
+ *
+ * Fallback path — DRM (open-source drivers, Mesa, etc.):
+ *   /sys/class/drm/card0/device/product_name
+ *   /sys/class/drm/card1/device/product_name  … (first non-empty file wins)
+ *
+ * @return A string such as "NVIDIA GeForce RTX 3060", or "Unknown GPU" if
+ *         neither path produces a usable result.
+ */
+[[nodiscard]] static std::string read_gpu_name_linux()
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+
+    // -- Primary: NVIDIA proprietary sysfs tree --------------------------------
+    const fs::path nvidia_base("/proc/driver/nvidia/gpus");
+    if (fs::exists(nvidia_base, ec)) {
+        for (const auto &gpu_dir : fs::directory_iterator(nvidia_base, ec)) {
+            // Each subdirectory is a PCI address; the "information" file inside
+            // contains human-readable key=value pairs about the device.
+            const fs::path info_file = gpu_dir.path() / "information";
+            std::ifstream f(info_file);
+            if (!f.is_open())
+                continue;                                                           // directory without the file
+
+            std::string line;
+            while (std::getline(f, line)) {
+                if (!line.starts_with("Model:"))
+                    continue;
+
+                const std::size_t colon = line.find(':');
+                if (colon == std::string::npos)
+                    continue;
+
+                // Skip ": " after the colon.
+                std::string name = line.substr(colon + 2);
+                while (!name.empty() && (name.back() == ' ' || name.back() == '\r'))
+                    name.pop_back();
+
+                return name;                                                       // e.g. "NVIDIA GeForce RTX 3060"
+            }
+        }
+    }
+
+    // -- Fallback: DRM product_name (Mesa / open-source / Intel / AMD) ---------
+    for (int card_idx = 0; card_idx < 4; ++card_idx) {
+        // Probe up to card3; most systems have only one or two GPU nodes.
+        const fs::path product_file =
+            fs::path("/sys/class/drm") /
+            ("card" + std::to_string(card_idx)) /
+            "device" / "product_name";
+
+        std::ifstream f(product_file);
+        if (!f.is_open())
+            continue;                                                               // card node absent
+
+        std::string name;
+        std::getline(f, name);                                                     // single-line file
+
+        // Trim trailing whitespace and newlines.
+        while (!name.empty() && (name.back() == ' '  ||
+                                  name.back() == '\n' ||
+                                  name.back() == '\r'))
+            name.pop_back();
+
+        if (!name.empty())
+            return name;                                                           // first non-empty name wins
+    }
+
+    return "Unknown GPU";                                                          // neither path succeeded
+}
+
 const std::unordered_set<std::string> k_video_exts = {
     ".mp4",
     ".mkv",
@@ -991,14 +1115,15 @@ void VideoPlayer::poll_events(VideoEntry &e)
         }
  
         // -- Video reconfiguration (dimensions or stream change) ---------------
+        // -- Video reconfiguration (dimensions or stream change) ---------------
         if (ev->event_id == MPV_EVENT_VIDEO_RECONFIG) {
             APP_DEBUG_LOG("[VideoPlayer] event VIDEO_RECONFIG id={}", e.id);
- 
-            // Read the actual decoded frame dimensions.
+
+            // Read the actual decoded frame dimensions from mpv.
             int64_t nw = 0, nh = 0;
             mpv_get_property(e.mpv, "dwidth",  MPV_FORMAT_INT64, &nw);
             mpv_get_property(e.mpv, "dheight", MPV_FORMAT_INT64, &nh);
- 
+
             if (nw > 0 && nh > 0 &&
                 (static_cast<int>(nw) != e.video_w || static_cast<int>(nh) != e.video_h)) {
                 // Dimensions changed — tear down and rebuild GPU resources.
@@ -1011,37 +1136,81 @@ void VideoPlayer::poll_events(VideoEntry &e)
                 APP_DEBUG_LOG("[VideoPlayer] reconfigured id={} {}x{}",
                               e.id, e.video_w, e.video_h);
             }
- 
+
             // -----------------------------------------------------------------
-            // Update the per-entry upload throttle from the container frame rate.
-            //
-            // "container-fps" is the declared rate in the file header; it is
-            // available immediately after VIDEO_RECONFIG without waiting for frames.
-            // A fallback of 30 fps is used for audio-only streams or containers
-            // that omit the field.
-            //
-            // The interval is set to 90 % of one frame period rather than exactly
-            // 1/fps.  The 10 % headroom ensures the upload gate does not edge-slip
-            // past the next frame's arrival time when the OS timer granularity is
-            // coarser than the frame period (common on Windows with the default
-            // 15 ms timer resolution).
+            // Update per-entry upload throttle from the container frame rate.
+            // "container-fps" is declared in the file header and is available
+            // immediately after VIDEO_RECONFIG.  Falls back to 30 fps for
+            // audio-only streams or containers that omit the field.
+            // The interval is 90 % of one frame period to prevent edge-slip
+            // when the OS timer granularity is coarser than the frame period.
             // -----------------------------------------------------------------
             double fps = 0.0;
             if (mpv_get_property(e.mpv, "container-fps", MPV_FORMAT_DOUBLE, &fps) < 0
                 || fps <= 1.0) {
-                fps = 30.0;                                                        // safe fallback
+                fps = 30.0;                                                        // safe fallback for audio or missing field
             }
-            e.container_fps = fps;                                                 // store for UI display
- 
-            // 90 % of one frame period, cast to the steady_clock's native duration.
+            e.container_fps = fps;
+
+            // 90 % of one frame period cast to steady_clock's native duration.
             const double interval_s = (1.0 / fps) * 0.9;
             e.frame_interval = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                 std::chrono::duration<double>(interval_s));
- 
+
             APP_DEBUG_LOG("[VideoPlayer] fps={:.2f} frame_interval={}ms",
                           fps,
                           std::chrono::duration_cast<std::chrono::milliseconds>(
                               e.frame_interval).count());
+
+            // -----------------------------------------------------------------
+            // OSD: show decoder mode + system hardware on every reconfiguration.
+            //
+            // "hwdec-current" returns the *active* hwdec backend chosen by mpv
+            // for this stream ("nvdec", "vaapi", "vdpau", "dxva2", "no", …).
+            // "no" means pure software decoding via libavcodec on the CPU.
+            //
+            // CPU and GPU names are read once from the Linux sysfs/procfs tree
+            // and cached in function-local statics so the file I/O happens only
+            // on the first reconfiguration event during the process lifetime.
+            // -----------------------------------------------------------------
+
+            // Lazy-initialised system info — read from the OS exactly once.
+            static const std::string s_cpu_name = read_cpu_name_linux();          // e.g. "Intel(R) Core(TM) i7-7700 @ 3.60GHz"
+            static const std::string s_gpu_name = read_gpu_name_linux();          // e.g. "NVIDIA GeForce RTX 3060"
+
+            // Query the decoder mpv actually selected for this stream.
+            // "no" = software (libavcodec on the CPU); anything else = hardware.
+            char *hwdec_raw = nullptr;
+            mpv_get_property(e.mpv, "hwdec-current", MPV_FORMAT_STRING, &hwdec_raw);
+
+            // Wrap in a std::string so we own the copy; free the mpv allocation.
+            const std::string hwdec_current = (hwdec_raw && hwdec_raw[0] != '\0')
+                                                  ? std::string(hwdec_raw)
+                                                  : "no";
+            if (hwdec_raw)
+                mpv_free(hwdec_raw);                                               // always free mpv-allocated strings
+
+            // Build the human-readable decoder label:
+            //   "SW (libavcodec)"  — when mpv fell back to CPU decoding
+            //   "HW (nvdec)"       — when a hardware backend is active
+            const bool hw_active      = (hwdec_current != "no");
+            const std::string dec_mode = hw_active
+                                             ? ("HW (" + hwdec_current + ")")     // e.g. "HW (nvdec)"
+                                             : "SW (libavcodec)";                  // pure CPU path
+
+            // Compose the final OSD string. std::format (C++23) produces a
+            // single allocation and is evaluated at compile time for the format
+            // string itself, keeping runtime overhead minimal.
+            const std::string osd_msg = std::format(
+                "Decoder : {}\nCPU     : {}\nGPU     : {}",
+                dec_mode,
+                s_cpu_name,
+                s_gpu_name);
+
+            e.osd.show(osd_msg);                                                   // display for the configured duration
+
+            APP_DEBUG_LOG("[VideoPlayer] OSD decoder info id={} hwdec-current='{}'",
+                          e.id, hwdec_current);
         }
     }
 }
@@ -1268,8 +1437,9 @@ void VideoPlayer::toggle_hwdec(const std::string &source)
         entry->hwdec_enabled = !entry->hwdec_enabled;
         entry->resume_position_seconds = current_position_seconds(source);
         entry->resume_seek_pending = entry->resume_position_seconds > 0;
-        entry->reload_osd_message = entry->hwdec_enabled ? "NVDEC On" : "NVDEC Off";
-        entry->reload_requested = true;
+   entry->reload_osd_message = entry->hwdec_enabled
+                                            ? "HW decode requested (NVDEC)"
+                                            : "SW decode requested (libavcodec)";        entry->reload_requested = true;
         return;
     }
 }
@@ -1283,7 +1453,12 @@ void VideoPlayer::set_all_hwdec(bool enabled)
         entry->hwdec_enabled = enabled;
         entry->resume_position_seconds = current_position_seconds(entry->source);
         entry->resume_seek_pending = entry->resume_position_seconds > 0;
-        entry->reload_osd_message = enabled ? "NVDEC On" : "NVDEC Off";
+        // After the reload, poll_events/VIDEO_RECONFIG will show the full
+        // decoder+system OSD automatically.  This brief message confirms the
+        // toggle intent before the reload completes.
+        entry->reload_osd_message = entry->hwdec_enabled
+                                        ? "HW decode requested (NVDEC)"           // will activate after reload
+                                        : "SW decode requested (libavcodec)";      // CPU path after reload
         entry->reload_requested = true;
     }
 }

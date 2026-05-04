@@ -15,6 +15,10 @@
 #include <cstdio>
 #include <cstring>
 #include <cctype>
+#include <cerrno>
+#include <cstdio>
+#include <fcntl.h>
+#include <fstream>
 #include <filesystem>
 #include <functional>
 #include <fstream>
@@ -27,11 +31,17 @@
 #include <regex>
 #include <unordered_set>
 #include <unordered_map>
+#include <unistd.h>
+
 #include <utility>
 #include <vector>
 #include <list>
 #include <deque>
 #include <system_error>
+
+#include <sys/ioctl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 #include <cstdio>
 #include <cstdlib>

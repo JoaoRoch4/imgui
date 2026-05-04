@@ -29,6 +29,8 @@
 #include "window_state_toml.hpp"
 
 #include "FileBrowser.hpp"
+#include "imgui_console.hpp"
+#include "vulkan_emoji_atlas.hpp"
 
 // ============================================================================
 // Constructor / destructor
@@ -336,6 +338,25 @@ void MainMenuBar::Setup(StyleEditor *style_editor, SDL_Window *window,
                         m_bulk_image_open.get(), m_history_mgr.get(),
                         m_video_downloader.get(), m_opened_files_window.get(),
                         m_vk, m_use_video_player_placebo);
+
+  // ---- Console -------------------------------------------------------
+  m_console = std::make_unique<ConsoleCommands>();
+  m_console->OnQuit = [this]() {
+    request_quit = true;
+  };
+  m_console->OnDemoToggle = [this](bool on) {
+    if (m_show_demo_window) *m_show_demo_window = on;
+  };
+  m_console->OnStyleChange = [](int which) {
+    switch (which) {
+      case 0: ImGui::StyleColorsDark();    break;
+      case 1: ImGui::StyleColorsLight();   break;
+      case 2: ImGui::StyleColorsClassic(); break;
+      default: break;
+    }
+  };
+  m_emoji_atlas = std::make_unique<VulkanEmojiAtlas>(*m_vk);
+  // Build the atlas lazily on first Draw() — deferred to avoid blocking Setup.
 }
 
 void MainMenuBar::Shutdown() {
@@ -348,6 +369,7 @@ void MainMenuBar::Shutdown() {
   m_video_downloader->shutdown();
   m_history_preview->shutdown();
   m_viewer->shutdown(*m_vk);
+  m_emoji_atlas.reset(); // frees GPU resources before ImGui Vulkan shutdown
 
   curl_global_cleanup();
 }
@@ -380,6 +402,7 @@ void MainMenuBar::ApplyRuntimeConfig(const WindowStateToml &state) {
     GetShowFileExplorerFlag() = true;
     browser.Open();
   }
+  m_show_console = state.show_console_window;
 }
 
 bool MainMenuBar::LoadOpenedFilesHistoryFromToml(
@@ -409,6 +432,7 @@ void MainMenuBar::ExportRuntimeConfig(WindowStateToml *state) const {
   for (const auto &dir : browser.GetRecentDirectories())
     state->file_explorer_recent_directories.push_back(dir.string());
   state->show_file_explorer_window = GetShowFileExplorerFlag();
+  state->show_console_window = m_show_console;
 }
 
 void MainMenuBar::SetThumbDir(const std::filesystem::path &dir) {
@@ -565,6 +589,9 @@ void MainMenuBar::Build() {
         file_explorer.Close();
     }
 
+    if (ImGui::MenuItem("Console", nullptr, m_show_console))
+      m_show_console = !m_show_console;
+
     if (m_style_editor)
       ImGui::MenuItem("Style Editor", nullptr, &m_style_editor->IsOpen);
 
@@ -599,6 +626,10 @@ void MainMenuBar::Build() {
     if (!file_explorer.IsOpened())
       show_file_explorer = false;
   }
+
+  // Console window
+  if (m_show_console && m_console)
+    m_console->Draw("Console##main", &m_show_console);
 
   // Step 9 — URL popup
   m_open_image_dialogs->draw_url_popup();

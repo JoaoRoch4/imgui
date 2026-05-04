@@ -117,6 +117,11 @@ add_executable(example_sdl3_vulkan
 
     code/ui/Editor/TextEditor.cpp
 
+    # UI — console (emoji atlas + interactive shell)
+    code/ui/console/emoji_atlas.cpp
+    code/ui/console/vulkan_emoji_atlas.cpp
+    code/ui/console/imgui_console.cpp
+
     # ImGui core + Freetype font rasterizer
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_demo.cpp
@@ -186,6 +191,7 @@ target_include_directories(example_sdl3_vulkan PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/video/downloader
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/video/video_preview
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/video/widgets
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/console
 )
 
 # External / vendored / system headers — marked SYSTEM so the compiler
@@ -246,6 +252,8 @@ target_compile_definitions(example_sdl3_vulkan PRIVATE
     $<$<CONFIG:Debug>:APP_USE_VULKAN_DEBUG_REPORT>
     # Path to bundled ImGui fonts, baked in at compile time
     IMGUI_FONTS_DIR="${IMGUI_DIR}/misc/fonts"
+    # Enable OT-SVG emoji rendering via PlutoSVG in both EmojiAtlas and ImGui FreeType
+    IMGUI_ENABLE_FREETYPE_PLUTOSVG
 )
 
 # ── Link libraries ────────────────────────────────────────────────────────────

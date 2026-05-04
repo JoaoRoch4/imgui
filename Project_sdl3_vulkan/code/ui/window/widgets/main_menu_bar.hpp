@@ -19,6 +19,8 @@ class FileBrowserContextMenu;
 class MediaHistoryManager;
 class MediaLoadHandler;
 class AppStateCoordinator;
+class ConsoleCommands;
+class VulkanEmojiAtlas;
 
 /**
  * Owns the application main menu bar and coordinates all top-level subsystems.
@@ -104,6 +106,11 @@ private:
   std::unique_ptr<MediaHistoryManager> m_history_mgr;
   std::unique_ptr<MediaLoadHandler> m_load_handler;
   std::unique_ptr<AppStateCoordinator> m_app_state;
+
+  // ---- Console ------------------------------------------------------------
+  std::unique_ptr<ConsoleCommands>  m_console;
+  std::unique_ptr<VulkanEmojiAtlas> m_emoji_atlas;
+  bool m_show_console = false;
 
   bool m_use_video_player_placebo = false;
 };

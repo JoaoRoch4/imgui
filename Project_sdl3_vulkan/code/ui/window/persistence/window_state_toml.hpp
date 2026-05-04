@@ -132,6 +132,7 @@ struct WindowStateToml {
   bool show_runtime_config_window = false;
   bool show_opened_files_window = false;
   bool show_file_explorer_window = false;
+  bool show_console_window = false;
   bool vsync = true;
   int video_resume_persist_min_duration_seconds = 30;
   bool hover_preview_enabled = true;

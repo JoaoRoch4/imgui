@@ -71,6 +71,8 @@ std::string FieldCommentFor(const std::string &section_name,
     return "# Show Opened Files window.";
   if (key == "show_file_explorer_window")
     return "# Show File Explorer window.";
+  if (key == "show_console_window")
+    return "# Show Console window.";
   if (key == "vsync")
     return "# Enable vertical synchronization (FIFO). Disable for uncapped "
            "frame rate (MAILBOX/IMMEDIATE).";

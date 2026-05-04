@@ -1,6 +1,5 @@
 file rename
 edit file metadata
-restart all theads
 download in osd
 download percentage
 loop and acelleration on runtime configs
@@ -18,3 +17,4 @@ file exp contexct menu, search bar, sort
 fix: if a video is finished set the time im toml to 00:00
 fix: broken loopbutton
 fix: runtime config
+image preview size

@@ -131,6 +131,7 @@ struct WindowStateToml {
   bool show_style_editor_window = false;
   bool show_runtime_config_window = false;
   bool show_opened_files_window = false;
+  bool show_file_explorer_window = false;
   bool vsync = true;
   int video_resume_persist_min_duration_seconds = 30;
   bool hover_preview_enabled = true;
@@ -153,6 +154,7 @@ struct WindowStateToml {
 
   std::optional<Vec2Toml> hover_preview_size;
   std::optional<Vec2Toml> seek_preview_size;
+  std::optional<Vec2Toml> image_hover_preview_size;
 };
 
 bool LoadWindowStateToml(const std::filesystem::path &file_path,

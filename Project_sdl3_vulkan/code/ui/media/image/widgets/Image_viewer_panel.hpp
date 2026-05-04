@@ -2,8 +2,11 @@
 
 #include "pch.hpp"
 
+#include "image_context_menu.hpp"
 #include "vulkan_context.hpp"
 #include "vulkan_texture.hpp"
+
+struct SDL_Window;
 
 
 /**
@@ -27,6 +30,16 @@ public:
 
     ImageViewerPanel();
     ~ImageViewerPanel() = default;
+
+    /// Maximum bounding box for the tab hover thumbnail (never upscales).
+    static inline ImVec2 hover_preview_size{280.0f, 180.0f};
+
+    /// Store the SDL window used to parent save-file dialogs.
+    void setup(SDL_Window *window);
+
+    /// Register a callback invoked after a successful image save.
+    void set_on_save_success(
+        std::function<void(const std::string &, const std::filesystem::path &)> cb);
 
     ImageViewerPanel(const ImageViewerPanel &)            = delete;
     ImageViewerPanel &operator=(const ImageViewerPanel &) = delete;
@@ -107,4 +120,5 @@ private:
     std::vector<ImageEntry> m_images;           ///< All open (or closing) image entries.
     int                     m_next_id;           ///< Monotonically increasing ID counter.
     int                     m_requested_focus_id; ///< Entry id that wants focus, or -1.
+    ImageContextMenu        m_context_menu;       ///< Right-click context menu for open images.
 };

@@ -15,6 +15,7 @@ class ConfigRuntime;
 class HistoryPreview;
 class OpenedFilesWindow;
 class VideoContextMenu;
+class FileBrowserContextMenu;
 class MediaHistoryManager;
 class MediaLoadHandler;
 class AppStateCoordinator;
@@ -97,6 +98,7 @@ private:
   std::unique_ptr<HistoryPreview> m_history_preview;
   std::unique_ptr<OpenedFilesWindow> m_opened_files_window;
   std::unique_ptr<VideoContextMenu> m_video_context_menu;
+  std::unique_ptr<FileBrowserContextMenu> m_fb_context_menu;
 
   // ---- Extracted responsibility classes -----------------------------------
   std::unique_ptr<MediaHistoryManager> m_history_mgr;

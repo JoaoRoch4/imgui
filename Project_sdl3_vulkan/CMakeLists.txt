@@ -97,6 +97,7 @@ add_executable(example_sdl3_vulkan
     code/ui/media/image/dialog/bulk_image_open_queue.cpp
     code/ui/media/image/dialog/open_image_dialogs.cpp
     code/ui/media/image/widgets/Image_viewer_panel.cpp
+    code/ui/media/image/widgets/image_context_menu.cpp
 
     # UI — video subsystem
     code/ui/media/video/player/video_player.cpp
@@ -112,6 +113,7 @@ add_executable(example_sdl3_vulkan
     code/ui/config/config_runtime.cpp
 
     code/ui/FileExplorer/FileBrowser.cpp
+    code/ui/FileExplorer/file_browser_context_menu.cpp
 
     code/ui/Editor/TextEditor.cpp
 

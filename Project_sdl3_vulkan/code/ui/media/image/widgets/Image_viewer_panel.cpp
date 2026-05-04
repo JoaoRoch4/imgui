@@ -46,6 +46,7 @@
 #include "Image_viewer_panel.hpp"
 
 #include "imgui_internal.h"
+#include "window_state_toml.hpp"
 
 // ============================================================================
 // Construction
@@ -58,7 +59,19 @@ ImageViewerPanel::ImageViewerPanel()
     : m_images{}               // no images open at startup
     , m_next_id{0}             // IDs start at zero and increment monotonically
     , m_requested_focus_id{-1} // -1 means no focus request pending
+    , m_context_menu{}
 {
+}
+
+void ImageViewerPanel::setup(SDL_Window *window)
+{
+    m_context_menu.setup(window);
+}
+
+void ImageViewerPanel::set_on_save_success(
+    std::function<void(const std::string &, const std::filesystem::path &)> cb)
+{
+    m_context_menu.set_on_save_success(std::move(cb));
 }
 
 // ============================================================================
@@ -258,6 +271,7 @@ void ImageViewerPanel::build_view_menu_items() {
  * Closed entries are skipped; they are removed by evict_closed().
  */
 void ImageViewerPanel::draw_windows() {
+    m_context_menu.process_pending_save();
     for (auto &entry : m_images) {
         if (!entry.open)
             continue; // skip entries waiting to be evicted
@@ -351,6 +365,17 @@ void ImageViewerPanel::draw_single_window(ImageEntry &entry) {
     clamp_view_to_bounds(entry, canvas_size, base_scale);
     render_image(entry, canvas_pos, canvas_size, base_scale);
     render_overlay(entry, canvas_pos, canvas_size);
+
+    // Right-click context menu anywhere in the window.
+    {
+        WindowStateToml::ImageHistoryEntry hist{};
+        hist.source = entry.source;
+        hist.kind   = entry.kind;
+        const auto result = m_context_menu.draw_for_window(
+            hist, ("##img_ctx_" + std::to_string(entry.id)).c_str());
+        if (result.erase)
+            entry.open = false;
+    }
 
     ImGui::End();
     ImGui::PopStyleColor(1);
@@ -617,14 +642,14 @@ void ImageViewerPanel::render_tab_hover_preview(const ImageEntry &entry) const {
     if (!entry.texture.is_loaded())
         return;
 
-    // Scale the thumbnail to fit within a 280 × 180 bounding box without upscaling.
+    // Scale the thumbnail to fit within hover_preview_size (upscaling allowed).
     const float src_w = static_cast<float>(entry.texture.width);
     const float src_h = static_cast<float>(entry.texture.height);
-    constexpr float max_w = 280.0f;
-    constexpr float max_h = 180.0f;
+    const float max_w = ImageViewerPanel::hover_preview_size.x;
+    const float max_h = ImageViewerPanel::hover_preview_size.y;
     const float scale = std::min(max_w / src_w, max_h / src_h);
-    const float draw_w = src_w * std::min(scale, 1.0f); // never upscale
-    const float draw_h = src_h * std::min(scale, 1.0f);
+    const float draw_w = src_w * scale;
+    const float draw_h = src_h * scale;
 
     // Clamp the tooltip so it stays fully on-screen regardless of the tab position.
     const ImVec2 mouse = ImGui::GetMousePos();

@@ -1,8 +1,9 @@
 #pragma once
 
+#include "pch.hpp"
+
 #include "window_state_toml.hpp"
 
-#include <functional>
 
 /// Runtime configuration window.
 /// Exposes settings that can be changed while the application is running,
@@ -60,8 +61,6 @@ public:
 private:
     ImVec2 m_pending_hover_size;
     ImVec2 m_pending_seek_size;
-    ImVec2 m_hover_edit_size;
-    ImVec2 m_seek_edit_size;
     int m_pending_video_resume_threshold_seconds;
     int m_applied_video_resume_threshold_seconds;
     std::function<void()> m_on_clear_thumbnail_cache;

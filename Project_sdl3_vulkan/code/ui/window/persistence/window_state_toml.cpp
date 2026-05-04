@@ -1,10 +1,7 @@
+
+#include "pch.hpp"
+
 #include "window_state_toml.hpp"
-
-#include <rfl/toml.hpp>
-#include <rfl/toml/save.hpp>
-#include <rfl/toml/write.hpp>
-
-#include <cctype>
 
 namespace {
 
@@ -72,6 +69,8 @@ std::string FieldCommentFor(const std::string &section_name,
     return "# Show Runtime Config window.";
   if (key == "show_opened_files_window")
     return "# Show Opened Files window.";
+  if (key == "show_file_explorer_window")
+    return "# Show File Explorer window.";
   if (key == "vsync")
     return "# Enable vertical synchronization (FIFO). Disable for uncapped "
            "frame rate (MAILBOX/IMMEDIATE).";
@@ -87,13 +86,21 @@ std::string FieldCommentFor(const std::string &section_name,
     return "# Recently accessed folders used by File Explorer combo "
            "(newest first).";
   if (key == "global_video_playback_mode")
-    return "# Global video playback mode: 0=SW MPV, 1=NVDEC MPV, 2=NVDEC libplacebo.";
+    return "# Global video playback mode: 0=SW MPV, 1=NVDEC MPV, 2=NVDEC "
+           "libplacebo.";
   if (key == "hwdec_enabled")
     return "# Reopen this video with mpv hardware decoding enabled.";
   if (key == "playback_mode")
-    return "# Per-entry playback mode: -1=derive from hwdec_enabled, 0=SW MPV, 1=NVDEC MPV, 2=NVDEC libplacebo.";
+    return "# Per-entry playback mode: -1=derive from hwdec_enabled, 0=SW MPV, "
+           "1=NVDEC MPV, 2=NVDEC libplacebo.";
   if (key == "resume_position_seconds")
     return "# Resume playback position in whole seconds.";
+  if (key == "hover_preview_size")
+    return "# Video hover preview bounding size (px).";
+  if (key == "seek_preview_size")
+    return "# Video seek preview bounding size (px).";
+  if (key == "image_hover_preview_size")
+    return "# Image tab hover preview bounding size (px).";
 
   if (section_name == "clear_color" || section_name == "style.colors") {
     if (key == "r")
@@ -167,8 +174,9 @@ void AnnotateWindowStateToml(const std::filesystem::path &file_path) {
 
   std::vector<std::string> annotated;
   annotated.reserve(lines.size() * 2 + 8);
-  annotated.emplace_back("# SDL3+Vulkan ImGui persisted state (auto-generated). "
-                      "Manual edits are allowed.");
+  annotated.emplace_back(
+      "# SDL3+Vulkan ImGui persisted state (auto-generated). "
+      "Manual edits are allowed.");
 
   for (const std::string &current : lines) {
     const std::string trimmed = LTrim(current);

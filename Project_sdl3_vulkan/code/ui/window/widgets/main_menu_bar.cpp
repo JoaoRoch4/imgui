@@ -20,6 +20,7 @@
 #include "recent_history_menu.hpp"
 #include "style_editor.hpp"
 #include "video_context_menu.hpp"
+#include "file_browser_context_menu.hpp"
 #include "video_downloader.hpp"
 #include "video_playback_mode.hpp"
 #include "video_player.hpp"
@@ -36,7 +37,7 @@
 namespace {
 ImGui::FileBrowser &GetMainFileExplorer() {
   static ImGui::FileBrowser browser(
-      ImGuiFileBrowserFlags_NoModal | ImGuiFileBrowserFlags_EditPathString |
+      ImGuiFileBrowserFlags_Window | ImGuiFileBrowserFlags_EditPathString |
       ImGuiFileBrowserFlags_CreateNewDir);
   static bool configured = false;
   if (!configured) {
@@ -95,6 +96,7 @@ MainMenuBar::MainMenuBar()
       m_history_preview{std::make_unique<HistoryPreview>()},
       m_opened_files_window{std::make_unique<OpenedFilesWindow>()},
       m_video_context_menu{std::make_unique<VideoContextMenu>()},
+      m_fb_context_menu{std::make_unique<FileBrowserContextMenu>()},
       m_history_mgr{std::make_unique<MediaHistoryManager>()},
       m_load_handler{std::make_unique<MediaLoadHandler>()},
       m_app_state{std::make_unique<AppStateCoordinator>()},
@@ -121,6 +123,7 @@ void MainMenuBar::Setup(StyleEditor *style_editor, SDL_Window *window,
   curl_global_init(CURL_GLOBAL_DEFAULT);
 
   m_open_image_dialogs->setup(m_window);
+  m_viewer->setup(m_window);
   m_video_player->bind_context(m_vk);
   m_video_player->setup(m_vk);
   m_video_player_placebo->bind_context(m_vk);
@@ -202,6 +205,13 @@ void MainMenuBar::Setup(StyleEditor *style_editor, SDL_Window *window,
     tmp.title  = path.filename().string();
     tmp.kind   = "file";
     m_history_preview->draw_for_hover(tmp);
+  });
+
+  m_fb_context_menu->setup(m_window);
+  GetMainFileExplorer().SetContextMenuCallback([this](const std::filesystem::path &path) {
+    auto res = m_fb_context_menu->draw(path);
+    if (res.open)
+      m_open_image_dialogs->queue_path(res.open_path.string());
   });
 
   m_app_state->setup(m_history_mgr.get(), m_config_runtime.get(),
@@ -366,6 +376,10 @@ void MainMenuBar::ApplyRuntimeConfig(const WindowStateToml &state) {
   browser.SetSortModeIndex(state.file_explorer_sort_mode);
   if (!state.file_explorer_last_directory.empty())
     browser.SetDirectory(state.file_explorer_last_directory);
+  if (state.show_file_explorer_window) {
+    GetShowFileExplorerFlag() = true;
+    browser.Open();
+  }
 }
 
 bool MainMenuBar::LoadOpenedFilesHistoryFromToml(
@@ -394,6 +408,7 @@ void MainMenuBar::ExportRuntimeConfig(WindowStateToml *state) const {
   state->file_explorer_recent_directories.clear();
   for (const auto &dir : browser.GetRecentDirectories())
     state->file_explorer_recent_directories.push_back(dir.string());
+  state->show_file_explorer_window = GetShowFileExplorerFlag();
 }
 
 void MainMenuBar::SetThumbDir(const std::filesystem::path &dir) {
@@ -415,6 +430,9 @@ void MainMenuBar::Build() {
 
   // Step 2 — finalise deferred video save
   m_video_context_menu->process_pending_save();
+
+  // Step 2b — file browser context menu deferred ops (delete confirmation modal)
+  m_fb_context_menu->process_pending();
 
   // Step 3 — one-shot startup video restoration
   if (m_app_state->take_restore_videos_on_startup_pending())

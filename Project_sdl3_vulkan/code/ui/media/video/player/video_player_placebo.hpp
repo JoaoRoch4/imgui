@@ -2,6 +2,11 @@
 
 #include "pch.hpp"
 #include "window_state_toml.hpp"
+#include "placebo_entry.hpp"
+
+#include <libplacebo/log.h>
+#include <libplacebo/vulkan.h>
+#include <libplacebo/renderer.h>
 
 class vulkan_context;
 class VideoPlayer;
@@ -109,7 +114,7 @@ public:
         HistoryPreview *preview = nullptr,
         std::function<void(const std::string &)> on_fix_videos = nullptr,
         std::function<bool(const std::string &)> is_startup_videos_fixed = nullptr,
- std::function<bool()> on_get_app_fullscreen = nullptr,
+        std::function<bool()> on_get_app_fullscreen = nullptr,
         std::function<void(bool)> on_set_app_fullscreen = nullptr);
 
     static constexpr ImVec2 k_preview_size{320.0f, 180.0f};
@@ -119,20 +124,48 @@ public:
     void reset_to_defaults();
 
 private:
+    // ---- Vulkan / libplacebo GPU state (shared across all entries) ----------
+    bool init_placebo_gpu();
+    void destroy_placebo_gpu();
+
+    // ---- Per-entry lifecycle -----------------------------------------------
+    bool entry_create_shared_image(PlaceboEntry &e, int w, int h);
+    void entry_destroy_shared_image(PlaceboEntry &e);
+    bool entry_create_sync(PlaceboEntry &e);
+    void entry_destroy_sync(PlaceboEntry &e);
+    bool entry_create_mpv(PlaceboEntry &e, const std::string &path, bool hwdec);
+    void entry_destroy_mpv(PlaceboEntry &e);
+    void entry_poll_events(PlaceboEntry &e);
+    void entry_render_frame(PlaceboEntry &e); // mpv → libplacebo → output image
+    void entry_destroy_all(PlaceboEntry &e);
+    void entry_destroy_output_descriptor(PlaceboEntry &e);
+
+    // ---- Placeholder texture (shown before first frame) --------------------
     bool create_placeholder_texture();
     void destroy_placeholder_texture();
 
-    vulkan_context *m_vk = nullptr;
-    std::unique_ptr<VideoPlayer> m_player_bridge;
+    // ---- Members -----------------------------------------------------------
+    vulkan_context *m_vk     = nullptr;
+    Config          m_config{kDefaultConfig};
+    bool            m_initialized = false;
+    int             m_next_id     = 0;
+    int             m_resume_persist_min_duration_seconds =
+                        WindowStateToml{}.video_resume_persist_min_duration_seconds;
+    bool            m_global_loop_enabled = false;
+
+    // libplacebo GPU objects (imported from m_vk)
+    pl_log     m_pl_log    = nullptr;
+    pl_vulkan  m_pl_vk     = nullptr;  // imported from m_vk — does NOT own device
+    pl_renderer m_pl_renderer = nullptr;
+
+    // Per-video entries
+    std::vector<std::unique_ptr<PlaceboEntry>> m_entries;
+
+    // Delegate player for hover/seek preview (uses SW path, not placebo)
+    std::unique_ptr<VideoPlayer> m_hover_player;
     VideoDownloader *m_downloader = nullptr;
-    Config m_config{kDefaultConfig};
-    bool m_initialized = false;
-    int m_resume_persist_min_duration_seconds =
-        WindowStateToml{}.video_resume_persist_min_duration_seconds;
-    bool m_global_loop_enabled = false;
 
-    std::vector<std::string> m_open_sources;
-
+    // Context menu / callbacks
     VideoContextMenu *m_ctx_menu = nullptr;
     std::function<WindowStateToml::ImageHistoryEntry *(const std::string &)> m_ctx_lookup;
     std::function<void(const std::string &)> m_ctx_on_erase;
@@ -145,13 +178,18 @@ private:
     std::function<void(const std::string &)> m_on_fix_videos;
     std::function<bool(const std::string &)> m_is_startup_videos_fixed;
     std::function<bool()> m_on_get_app_fullscreen;
-    std::function<void(int)> m_on_set_app_fullscreen;
+    std::function<void(bool)> m_on_set_app_fullscreen;
 
-    int m_placeholder_width = 256;
-    int m_placeholder_height = 144;
-    VkDescriptorSet m_placeholder_descriptor_set = VK_NULL_HANDLE;
-    VkSampler m_placeholder_sampler = VK_NULL_HANDLE;
-    VkImageView m_placeholder_image_view = VK_NULL_HANDLE;
-    VkImage m_placeholder_image = VK_NULL_HANDLE;
-    VkDeviceMemory m_placeholder_image_memory = VK_NULL_HANDLE;
+    // Main-thread guard (mirrors VideoPlayer)
+    std::thread::id m_main_thread_id;
+
+    // Placeholder texture (checkerboard, shown while video loads)
+    int             m_placeholder_width  = 256;
+    int             m_placeholder_height = 144;
+    VkDescriptorSet m_placeholder_descriptor_set  = VK_NULL_HANDLE;
+    VkSampler       m_placeholder_sampler          = VK_NULL_HANDLE;
+    VkImageView     m_placeholder_image_view       = VK_NULL_HANDLE;
+    VkImage         m_placeholder_image            = VK_NULL_HANDLE;
+    VkDeviceMemory  m_placeholder_image_memory     = VK_NULL_HANDLE;
 };
+

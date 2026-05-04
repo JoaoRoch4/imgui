@@ -140,6 +140,11 @@ void vulkan_context::setup(std::vector<const char *> instance_extensions) {
     {
         std::vector<const char *> requested_device_extensions;
         requested_device_extensions.push_back("VK_KHR_swapchain");
+        // Required for Vulkan ↔ OpenGL/libplacebo zero-copy interop
+        requested_device_extensions.push_back(VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME);
+        requested_device_extensions.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+        requested_device_extensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME);
+        requested_device_extensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
 
         uint32_t properties_count;
         std::vector<VkExtensionProperties> properties;

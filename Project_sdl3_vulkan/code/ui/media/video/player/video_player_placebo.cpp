@@ -4,8 +4,66 @@
 
 #include "video_player.hpp"
 #include "vulkan_context.hpp"
+#include "core/log/debug_log.hpp"
+
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <GL/gl.h>
+#include <GL/glext.h>
 
 namespace {
+// ---------------------------------------------------------------------------
+// GL extension function table – loaded once via eglGetProcAddress
+// ---------------------------------------------------------------------------
+struct GlExtFuncs {
+    PFNGLCREATEMEMORYOBJECTSEXTPROC  CreateMemoryObjectsEXT = nullptr;
+    PFNGLDELETEMEMORYOBJECTSEXTPROC  DeleteMemoryObjectsEXT = nullptr;
+    PFNGLIMPORTMEMORYFDEXTPROC       ImportMemoryFdEXT      = nullptr;
+    PFNGLTEXSTORAGEMEM2DEXTPROC      TexStorageMem2DEXT     = nullptr;
+    PFNGLGENSEMAPHORESEXTPROC        GenSemaphoresEXT       = nullptr;
+    PFNGLDELETESEMAPHORESEXTPROC     DeleteSemaphoresEXT    = nullptr;
+    PFNGLIMPORTSEMAPHOREFDEXTPROC    ImportSemaphoreFdEXT   = nullptr;
+    PFNGLSIGNALSEMAPHOREEXTPROC      SignalSemaphoreEXT     = nullptr;
+    PFNGLWAITSEMAPHOREEXTPROC        WaitSemaphoreEXT       = nullptr;
+    // FBO functions (GL 3.0 – load via procaddr to be safe with EGL)
+    PFNGLGENFRAMEBUFFERSPROC         GenFramebuffers        = nullptr;
+    PFNGLBINDFRAMEBUFFERPROC         BindFramebuffer        = nullptr;
+    PFNGLFRAMEBUFFERTEXTURE2DPROC    FramebufferTexture2D   = nullptr;
+    PFNGLCHECKFRAMEBUFFERSTATUSPROC  CheckFramebufferStatus = nullptr;
+    PFNGLDELETEFRAMEBUFFERSPROC      DeleteFramebuffers     = nullptr;
+    bool loaded = false;
+
+    bool load() {
+        if (loaded) return true;
+#define GLOAD(T, name) \
+        name = reinterpret_cast<T>(eglGetProcAddress(#name)); \
+        if (!name) { APP_DEBUG_LOG("[GlExtFuncs] failed to load: " #name); return false; }
+        GLOAD(PFNGLCREATEMEMORYOBJECTSEXTPROC,  CreateMemoryObjectsEXT)
+        GLOAD(PFNGLDELETEMEMORYOBJECTSEXTPROC,  DeleteMemoryObjectsEXT)
+        GLOAD(PFNGLIMPORTMEMORYFDEXTPROC,       ImportMemoryFdEXT)
+        GLOAD(PFNGLTEXSTORAGEMEM2DEXTPROC,      TexStorageMem2DEXT)
+        GLOAD(PFNGLGENSEMAPHORESEXTPROC,        GenSemaphoresEXT)
+        GLOAD(PFNGLDELETESEMAPHORESEXTPROC,     DeleteSemaphoresEXT)
+        GLOAD(PFNGLIMPORTSEMAPHOREFDEXTPROC,    ImportSemaphoreFdEXT)
+        GLOAD(PFNGLSIGNALSEMAPHOREEXTPROC,      SignalSemaphoreEXT)
+        GLOAD(PFNGLWAITSEMAPHOREEXTPROC,        WaitSemaphoreEXT)
+        GLOAD(PFNGLGENFRAMEBUFFERSPROC,         GenFramebuffers)
+        GLOAD(PFNGLBINDFRAMEBUFFERPROC,         BindFramebuffer)
+        GLOAD(PFNGLFRAMEBUFFERTEXTURE2DPROC,    FramebufferTexture2D)
+        GLOAD(PFNGLCHECKFRAMEBUFFERSTATUSPROC,  CheckFramebufferStatus)
+        GLOAD(PFNGLDELETEFRAMEBUFFERSPROC,      DeleteFramebuffers)
+#undef GLOAD
+        loaded = true;
+        APP_DEBUG_LOG("[GlExtFuncs] all GL interop extensions loaded");
+        return true;
+    }
+};
+
+// Vulkan extension function pointers (loaded via vkGetDeviceProcAddr)
+static PFN_vkGetMemoryFdKHR    s_vkGetMemoryFdKHR    = nullptr;
+static PFN_vkGetSemaphoreFdKHR s_vkGetSemaphoreFdKHR = nullptr;
+static GlExtFuncs               s_gl;
+
 uint32_t find_memory_type(VkPhysicalDevice phys,
                           uint32_t filter,
                           VkMemoryPropertyFlags props) {
@@ -37,7 +95,7 @@ const std::unordered_set<std::string> k_video_exts = {
 } // namespace
 
 VideoPlayerPlacebo::VideoPlayerPlacebo()
-    : m_player_bridge(std::make_unique<VideoPlayer>()) {
+    : m_hover_player(std::make_unique<VideoPlayer>()) {
 }
 
 VideoPlayerPlacebo::~VideoPlayerPlacebo() {
@@ -46,8 +104,9 @@ VideoPlayerPlacebo::~VideoPlayerPlacebo() {
 
 void VideoPlayerPlacebo::bind_context(vulkan_context *vk) {
     m_vk = vk;
-    if (m_player_bridge)
-        m_player_bridge->bind_context(vk);
+    m_main_thread_id = std::this_thread::get_id();
+    if (m_hover_player)
+        m_hover_player->bind_context(vk);
 }
 
 void VideoPlayerPlacebo::setup(vulkan_context *vk) {
@@ -68,12 +127,16 @@ void VideoPlayerPlacebo::setup(vulkan_context *vk, Config config) {
 
     m_vk = vk;
     m_config = config;
+    m_main_thread_id = std::this_thread::get_id();
     m_initialized = true;
 
-    if (m_player_bridge) {
-        m_player_bridge->bind_context(m_vk);
-        m_player_bridge->setup(m_vk);
-        m_player_bridge->set_all_hwdec(m_config.enable_hwdec);
+    if (!init_placebo_gpu())
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] init_placebo_gpu failed – falling back to SW path");
+
+    if (m_hover_player) {
+        m_hover_player->bind_context(m_vk);
+        m_hover_player->setup(m_vk);
+        m_hover_player->set_all_hwdec(m_config.enable_hwdec);
     }
     if (m_placeholder_descriptor_set == VK_NULL_HANDLE)
         create_placeholder_texture();
@@ -91,8 +154,8 @@ void VideoPlayerPlacebo::reconfigure(Config config) {
     if (!m_initialized)
         return;
 
-    if (m_player_bridge)
-        m_player_bridge->set_all_hwdec(m_config.enable_hwdec);
+    if (m_hover_player)
+        m_hover_player->set_all_hwdec(m_config.enable_hwdec);
 
     // Placeholder path for future runtime backend reconfiguration.
     // For now, keep the class initialized and only update the cached config.
@@ -125,16 +188,39 @@ bool VideoPlayerPlacebo::add_from_path(const std::filesystem::path &path,
     if (!m_initialized)
         return false;
 
-    reconfigure(Config{.enable_hwdec = hwdec_enabled, .prefer_nvdec = hwdec_enabled});
-    if (!m_player_bridge)
+    // If the libplacebo GPU pipeline is ready, use the PlaceboEntry path.
+    if (m_pl_renderer) {
+        for (const auto &e : m_entries) {
+            if (e->source == path.string() || e->playback_source == path.string())
+                return true; // already open
+        }
+        auto entry = std::make_unique<PlaceboEntry>();
+        entry->id     = m_next_id++;
+        entry->source = path.string();
+        entry->title  = title.empty() ? path.filename().string() : title;
+        entry->playback_source = logical_source.empty() ? path.string() : logical_source;
+        entry->hwdec_enabled = hwdec_enabled;
+        entry->resume_position_seconds = resume_position_seconds;
+        if (!initial_osd_message.empty())
+            entry->osd.show(initial_osd_message);
+        if (!entry_create_mpv(*entry, path.string(), hwdec_enabled)) {
+            APP_DEBUG_LOG("[VideoPlayerPlacebo] entry_create_mpv failed for {}", path.string());
+            return false;
+        }
+        m_entries.push_back(std::move(entry));
+        return true;
+    }
+
+    // Fallback: SW path via hover player
+    if (!m_hover_player)
         return false;
 
-    return m_player_bridge->add_from_path(path,
-                                          title,
-                                          logical_source,
-                                          hwdec_enabled,
-                                          resume_position_seconds,
-                                          initial_osd_message);
+    return m_hover_player->add_from_path(path,
+                                         title,
+                                         logical_source,
+                                         hwdec_enabled,
+                                         resume_position_seconds,
+                                         initial_osd_message);
 }
 
 bool VideoPlayerPlacebo::add_from_url(const std::string &url,
@@ -153,19 +239,34 @@ bool VideoPlayerPlacebo::add_from_url(const std::string &url,
         return false;
 
     reconfigure(Config{.enable_hwdec = hwdec_enabled, .prefer_nvdec = hwdec_enabled});
-    if (!m_player_bridge)
+    if (!m_hover_player)
         return false;
 
-    return m_player_bridge->add_from_url(url,
-                                         title,
-                                         hwdec_enabled,
-                                         resume_position_seconds,
-                                         initial_osd_message);
+    return m_hover_player->add_from_url(url,
+                                        title,
+                                        hwdec_enabled,
+                                        resume_position_seconds,
+                                        initial_osd_message);
 }
 
 void VideoPlayerPlacebo::update_frames() {
-    if (m_player_bridge)
-        m_player_bridge->update_frames();
+    assert((m_main_thread_id == std::thread::id{} ||
+            std::this_thread::get_id() == m_main_thread_id) &&
+           "VideoPlayerPlacebo::update_frames() must be called from the main thread");
+
+    if (m_hover_player)
+        m_hover_player->update_frames();
+
+    // PlaceboEntry GPU render loop
+    for (auto &e : m_entries) {
+        entry_poll_events(*e);
+        if (e->frame_dirty.load(std::memory_order_acquire) && !e->load_failed) {
+            e->frame_dirty.store(false, std::memory_order_release);
+            entry_render_frame(*e);
+        }
+    }
+    // Remove closed entries
+    std::erase_if(m_entries, [](const auto &ep) { return !ep->open; });
 }
 
 bool VideoPlayerPlacebo::create_placeholder_texture() {
@@ -383,73 +484,63 @@ void VideoPlayerPlacebo::draw() {
     if (!m_initialized)
         return;
 
-    if (m_player_bridge && m_player_bridge->has_open_windows()) {
-        m_player_bridge->draw();
-        return;
-    }
+    if (m_hover_player && m_hover_player->has_open_windows())
+        m_hover_player->draw();
 
     if (m_placeholder_descriptor_set == VK_NULL_HANDLE)
         create_placeholder_texture();
 
-    std::vector<std::string> still_open;
-    still_open.reserve(m_open_sources.size());
-
-    for (size_t i = 0; i < m_open_sources.size(); ++i) {
-        const std::string &source = m_open_sources[i];
+    for (size_t i = 0; i < m_entries.size(); ++i) {
+        PlaceboEntry &e = *m_entries[i];
 
         bool open = true;
-        const std::string title = std::string("VPP: ") + source + "###vpp_" + std::to_string(i);
-        if (!ImGui::Begin(title.c_str(), &open)) {
+        const std::string win_title = e.title.empty()
+            ? (std::string("Video###vpp_") + std::to_string(e.id))
+            : (e.title + "###vpp_" + std::to_string(e.id));
+
+        if (!ImGui::Begin(win_title.c_str(), &open)) {
             ImGui::End();
-            if (open)
-                still_open.push_back(source);
+            if (!open) e.open = false;
             continue;
         }
 
-        const pl_rect2df ref_rect = {0.0f, 0.0f, k_preview_size.x, k_preview_size.y};
-        const float base_w = static_cast<float>(pl_rect_w(ref_rect));
-        const float base_h = static_cast<float>(pl_rect_h(ref_rect));
-        const float base_aspect = base_h > 0.0f ? (base_w / base_h) : (16.0f / 9.0f);
-
-        const pl_rotation rot = pl_rotation_normalize(static_cast<pl_rotation>(i % PL_ROTATION_360));
-        const float rotated_aspect = pl_aspect_rotate(base_aspect, rot);
-
+        // Compute display size maintaining aspect ratio
         const float avail_w = std::max(ImGui::GetContentRegionAvail().x, 120.0f);
-        const float preview_w = std::min(avail_w, k_preview_size.x * 2.0f);
-        const float preview_h = preview_w / std::max(rotated_aspect, 0.001f);
+        float aspect = 16.0f / 9.0f;
+        if (e.shared_w > 0 && e.shared_h > 0)
+            aspect = static_cast<float>(e.shared_w) / static_cast<float>(e.shared_h);
+        const float disp_w = std::min(avail_w, 1920.0f);
+        const float disp_h = disp_w / aspect;
+        const ImVec2 disp_size(disp_w, disp_h);
 
-        ImGui::TextUnformatted("VideoPlayerPlacebo (libplacebo scaffold)");
-        ImGui::Text("source: %s", source.c_str());
-        ImGui::Text("rotation=%d aspect=%.3f", static_cast<int>(rot), rotated_aspect);
-        ImGui::Text("hwdec=%s nvdec=%s",
-                    m_config.enable_hwdec ? "on" : "off",
-                    m_config.prefer_nvdec ? "on" : "off");
+        // Use entry descriptor if available, otherwise placeholder
+        VkDescriptorSet tex = e.descriptor_set != VK_NULL_HANDLE
+            ? e.descriptor_set
+            : m_placeholder_descriptor_set;
 
-        const ImVec2 preview_size(preview_w, preview_h);
-        if (m_placeholder_descriptor_set != VK_NULL_HANDLE) {
-            ImGui::Image(std::bit_cast<ImTextureID>(m_placeholder_descriptor_set), preview_size);
-        } else {
-            ImGui::Dummy(preview_size);
-        }
+        if (tex != VK_NULL_HANDLE)
+            ImGui::Image(std::bit_cast<ImTextureID>(tex), disp_size);
+        else
+            ImGui::Dummy(disp_size);
+
+        if (e.load_failed)
+            ImGui::TextColored({1.0f, 0.3f, 0.3f, 1.0f}, "Load failed");
 
         ImGui::End();
 
-        if (open)
-            still_open.push_back(source);
+        if (!open) e.open = false;
     }
-
-    m_open_sources.swap(still_open);
 }
 
 void VideoPlayerPlacebo::notify_download_complete(const std::string &url,
                                                   const std::filesystem::path &cached_path) {
-    if (m_player_bridge)
-        m_player_bridge->notify_download_complete(url, cached_path);
+    if (m_hover_player)
+        m_hover_player->notify_download_complete(url, cached_path);
 
     const std::string cached = cached_path.string();
-    for (std::string &src : m_open_sources) {
-        if (src == url) {
-            src = cached;
+    for (auto &e : m_entries) {
+        if (e->source == url) {
+            e->source = cached;
             break;
         }
     }
@@ -457,67 +548,71 @@ void VideoPlayerPlacebo::notify_download_complete(const std::string &url,
 
 void VideoPlayerPlacebo::replace_source_with_saved_file(const std::string &source,
                                                         const std::filesystem::path &saved_path) {
-    if (m_player_bridge)
-        m_player_bridge->replace_source_with_saved_file(source, saved_path);
+    if (m_hover_player)
+        m_hover_player->replace_source_with_saved_file(source, saved_path);
 
     const std::string saved = saved_path.string();
-    for (std::string &src : m_open_sources) {
-        if (src == source) {
-            src = saved;
+    for (auto &e : m_entries) {
+        if (e->source == source) {
+            e->source = saved;
             break;
         }
     }
 }
 
 bool VideoPlayerPlacebo::close_window(const std::string &source) {
-    if (m_player_bridge && m_player_bridge->close_window(source))
+    if (m_hover_player && m_hover_player->close_window(source))
         return true;
 
-    const auto before = m_open_sources.size();
-    std::erase(m_open_sources, source);
-    return m_open_sources.size() != before;
+    const auto before = m_entries.size();
+    std::erase_if(m_entries, [&](const auto &e) { return e->source == source; });
+    return m_entries.size() != before;
 }
 
 void VideoPlayerPlacebo::close_all_windows() {
-    if (m_player_bridge)
-        m_player_bridge->close_all_windows();
-    m_open_sources.clear();
+    if (m_hover_player)
+        m_hover_player->close_all_windows();
+    m_entries.clear();
 }
 
 bool VideoPlayerPlacebo::has_open_windows() const {
-    if (m_player_bridge)
-        return m_player_bridge->has_open_windows() || !m_open_sources.empty();
-    return !m_open_sources.empty();
+    if (m_hover_player && m_hover_player->has_open_windows())
+        return true;
+    return !m_entries.empty();
 }
 
 std::vector<std::string> VideoPlayerPlacebo::open_sources() const {
-    if (m_player_bridge)
-        return m_player_bridge->open_sources();
-    return m_open_sources;
+    if (m_hover_player && m_hover_player->has_open_windows())
+        return m_hover_player->open_sources();
+    std::vector<std::string> srcs;
+    srcs.reserve(m_entries.size());
+    for (const auto &e : m_entries)
+        srcs.push_back(e->source);
+    return srcs;
 }
 
 VkDescriptorSet VideoPlayerPlacebo::get_open_thumbnail(const std::string &source) const {
-    if (m_player_bridge)
-        return m_player_bridge->get_open_thumbnail(source);
+    if (m_hover_player)
+        return m_hover_player->get_open_thumbnail(source);
     (void)source;
     return VK_NULL_HANDLE;
 }
 
 VkDescriptorSet VideoPlayerPlacebo::hover_thumbnail(const std::string &source) {
-    if (m_player_bridge)
-        return m_player_bridge->hover_thumbnail(source);
+    if (m_hover_player)
+        return m_hover_player->hover_thumbnail(source);
     (void)source;
     return VK_NULL_HANDLE;
 }
 
 void VideoPlayerPlacebo::notify_hover(const std::string &source) {
-    if (m_player_bridge)
-        m_player_bridge->notify_hover(source);
+    if (m_hover_player)
+        m_hover_player->notify_hover(source);
 }
 
 bool VideoPlayerPlacebo::save_hover_frame(const std::filesystem::path &path) {
-    if (m_player_bridge)
-        return m_player_bridge->save_hover_frame(path);
+    if (m_hover_player)
+        return m_hover_player->save_hover_frame(path);
     (void)path;
     return false;
 }
@@ -536,51 +631,51 @@ bool VideoPlayerPlacebo::is_video_url(const std::string &url) {
 
 void VideoPlayerPlacebo::set_downloader(VideoDownloader *d) {
     m_downloader = d;
-    if (m_player_bridge)
-        m_player_bridge->set_downloader(d);
+    if (m_hover_player)
+        m_hover_player->set_downloader(d);
 }
 
 void VideoPlayerPlacebo::restart_hover_preview() {
-    if (m_player_bridge)
-        m_player_bridge->restart_hover_preview();
+    if (m_hover_player)
+        m_hover_player->restart_hover_preview();
 }
 
 bool VideoPlayerPlacebo::consume_hover_popup_reopen_request() {
-    if (m_player_bridge)
-        return m_player_bridge->consume_hover_popup_reopen_request();
+    if (m_hover_player)
+        return m_hover_player->consume_hover_popup_reopen_request();
     return false;
 }
 
 bool VideoPlayerPlacebo::is_hover_dwell_pending(const std::string &source) const {
-    if (m_player_bridge)
-        return m_player_bridge->is_hover_dwell_pending(source);
+    if (m_hover_player)
+        return m_hover_player->is_hover_dwell_pending(source);
     (void)source;
     return false;
 }
 
 bool VideoPlayerPlacebo::can_toggle_hwdec(const std::string &source) const {
-    if (m_player_bridge)
-        return m_player_bridge->can_toggle_hwdec(source);
+    if (m_hover_player && m_hover_player->can_toggle_hwdec(source))
+        return true;
     return !source.empty();
 }
 
 bool VideoPlayerPlacebo::is_hwdec_enabled(const std::string &source) const {
-    if (m_player_bridge)
-        return m_player_bridge->is_hwdec_enabled(source);
+    if (m_hover_player)
+        return m_hover_player->is_hwdec_enabled(source);
     (void)source;
     return m_config.enable_hwdec;
 }
 
 int VideoPlayerPlacebo::current_position_seconds(const std::string &source) const {
-    if (m_player_bridge)
-        return m_player_bridge->current_position_seconds(source);
+    if (m_hover_player)
+        return m_hover_player->current_position_seconds(source);
     (void)source;
     return 0;
 }
 
 int VideoPlayerPlacebo::persisted_position_seconds(const std::string &source) const {
-    if (m_player_bridge)
-        return m_player_bridge->persisted_position_seconds(source);
+    if (m_hover_player)
+        return m_hover_player->persisted_position_seconds(source);
     (void)source;
     return 0;
 }
@@ -594,8 +689,8 @@ int VideoPlayerPlacebo::resume_persist_min_duration_seconds() const {
 }
 
 void VideoPlayerPlacebo::toggle_hwdec(const std::string &source) {
-    if (m_player_bridge) {
-        m_player_bridge->toggle_hwdec(source);
+    if (m_hover_player) {
+        m_hover_player->toggle_hwdec(source);
         return;
     }
     (void)source;
@@ -607,33 +702,34 @@ void VideoPlayerPlacebo::toggle_hwdec(const std::string &source) {
 
 void VideoPlayerPlacebo::sync_history_state(
     std::vector<WindowStateToml::ImageHistoryEntry> &history) const {
-    if (m_player_bridge) {
-        m_player_bridge->sync_history_state(history);
+    if (m_hover_player && m_hover_player->has_open_windows()) {
+        m_hover_player->sync_history_state(history);
         return;
     }
 
-    for (auto &entry : history) {
-        if (std::find(m_open_sources.begin(), m_open_sources.end(), entry.source) == m_open_sources.end())
-            continue;
-        entry.hwdec_enabled = m_config.enable_hwdec;
+    for (auto &hist_entry : history) {
+        const bool found = std::any_of(m_entries.begin(), m_entries.end(),
+                                       [&](const auto &e) { return e->source == hist_entry.source; });
+        if (!found) continue;
+        hist_entry.hwdec_enabled = m_config.enable_hwdec;
     }
 }
 
 void VideoPlayerPlacebo::set_all_hwdec(bool enabled) {
     reconfigure(Config{.enable_hwdec = enabled, .prefer_nvdec = enabled});
-    if (m_player_bridge)
-        m_player_bridge->set_all_hwdec(enabled);
+    if (m_hover_player)
+        m_hover_player->set_all_hwdec(enabled);
 }
 
 void VideoPlayerPlacebo::set_all_loop(bool enabled) {
     m_global_loop_enabled = enabled;
-    if (m_player_bridge)
-        m_player_bridge->set_all_loop(enabled);
+    if (m_hover_player)
+        m_hover_player->set_all_loop(enabled);
 }
 
 void VideoPlayerPlacebo::restart_all_threads() {
-    if (m_player_bridge)
-        m_player_bridge->restart_all_threads();
+    if (m_hover_player)
+        m_hover_player->restart_all_threads();
 }
 
 void VideoPlayerPlacebo::set_context_menu(
@@ -644,8 +740,8 @@ void VideoPlayerPlacebo::set_context_menu(
     m_ctx_lookup = std::move(lookup);
     m_ctx_on_erase = std::move(on_erase);
 
-    if (m_player_bridge)
-        m_player_bridge->set_context_menu(m_ctx_menu, m_ctx_lookup, m_ctx_on_erase);
+    if (m_hover_player)
+        m_hover_player->set_context_menu(m_ctx_menu, m_ctx_lookup, m_ctx_on_erase);
 }
 
 void VideoPlayerPlacebo::set_player_menu_callbacks(
@@ -668,8 +764,8 @@ void VideoPlayerPlacebo::set_player_menu_callbacks(
     m_on_get_app_fullscreen = std::move(on_get_app_fullscreen);
     m_on_set_app_fullscreen = std::move(on_set_app_fullscreen);
 
-    if (m_player_bridge) {
-        m_player_bridge->set_player_menu_callbacks(
+    if (m_hover_player) {
+        m_hover_player->set_player_menu_callbacks(
             m_on_open_image,
             m_on_open_online,
             m_on_open_recent,
@@ -682,18 +778,716 @@ void VideoPlayerPlacebo::set_player_menu_callbacks(
     }
 }
 
+// ==========================================================================
+// GPU pipeline – libplacebo + NVDEC no-copy
+// ==========================================================================
+
+bool VideoPlayerPlacebo::init_placebo_gpu() {
+    if (!m_vk) return false;
+    if (m_pl_renderer) return true; // already initialised
+
+    // Load Vulkan extension function pointers
+    s_vkGetMemoryFdKHR    = reinterpret_cast<PFN_vkGetMemoryFdKHR>(
+        vkGetDeviceProcAddr(m_vk->device, "vkGetMemoryFdKHR"));
+    s_vkGetSemaphoreFdKHR = reinterpret_cast<PFN_vkGetSemaphoreFdKHR>(
+        vkGetDeviceProcAddr(m_vk->device, "vkGetSemaphoreFdKHR"));
+
+    if (!s_vkGetMemoryFdKHR || !s_vkGetSemaphoreFdKHR) {
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] VK external memory/semaphore functions unavailable");
+        return false;
+    }
+
+    // Load GL extension functions (eglGetProcAddress is context-independent)
+    if (!s_gl.load()) {
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] GL interop extension functions unavailable");
+        return false;
+    }
+
+    // Create libplacebo log
+    pl_log_params log_params{};
+    log_params.log_cb    = [](void *, pl_log_level lv, const char *msg) {
+        if (lv <= PL_LOG_WARN)
+            APP_DEBUG_LOG("[libplacebo] {}", msg);
+    };
+    log_params.log_level = PL_LOG_WARN;
+    m_pl_log = pl_log_create(PL_API_VER, &log_params);
+    if (!m_pl_log) return false;
+
+    // Import our existing Vulkan device into libplacebo
+    static const char *ext_names[] = {
+        VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
+    };
+    pl_vulkan_import_params import_p{};
+    import_p.instance    = m_vk->instance;
+    import_p.phys_device = m_vk->physical_device;
+    import_p.device      = m_vk->device;
+    import_p.extensions  = ext_names;
+    import_p.num_extensions = 4;
+    import_p.queue_graphics = { m_vk->queue_family, 1 };
+    import_p.queue_compute  = { m_vk->queue_family, 1 };
+    import_p.queue_transfer = { m_vk->queue_family, 1 };
+
+    m_pl_vk = pl_vulkan_import(m_pl_log, &import_p);
+    if (!m_pl_vk) {
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] pl_vulkan_import failed");
+        pl_log_destroy(&m_pl_log);
+        return false;
+    }
+
+    m_pl_renderer = pl_renderer_create(m_pl_log, m_pl_vk->gpu);
+    if (!m_pl_renderer) {
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] pl_renderer_create failed");
+        pl_vulkan_destroy(&m_pl_vk);
+        pl_log_destroy(&m_pl_log);
+        return false;
+    }
+
+    APP_DEBUG_LOG("[VideoPlayerPlacebo] libplacebo GPU initialised");
+    return true;
+}
+
+void VideoPlayerPlacebo::destroy_placebo_gpu() {
+    if (m_pl_renderer) { pl_renderer_destroy(&m_pl_renderer); }
+    if (m_pl_vk)       { pl_vulkan_destroy(&m_pl_vk); }
+    if (m_pl_log)      { pl_log_destroy(&m_pl_log); }
+}
+
+// --------------------------------------------------------------------------
+// Shared Vulkan ↔ GL image
+// --------------------------------------------------------------------------
+bool VideoPlayerPlacebo::entry_create_shared_image(PlaceboEntry &e, int w, int h) {
+    if (!m_vk || !m_pl_vk) return false;
+
+    e.shared_w = w; e.shared_h = h;
+    e.shared_format = VK_FORMAT_R8G8B8A8_UNORM;
+
+    // 1. Create exportable VkImage
+    VkExternalMemoryImageCreateInfo ext_img_ci{
+        VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO};
+    ext_img_ci.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+
+    VkImageCreateInfo img_ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    img_ci.pNext        = &ext_img_ci;
+    img_ci.imageType    = VK_IMAGE_TYPE_2D;
+    img_ci.format       = e.shared_format;
+    img_ci.extent       = {static_cast<uint32_t>(w), static_cast<uint32_t>(h), 1u};
+    img_ci.mipLevels    = 1;
+    img_ci.arrayLayers  = 1;
+    img_ci.samples      = VK_SAMPLE_COUNT_1_BIT;
+    img_ci.tiling       = VK_IMAGE_TILING_OPTIMAL;
+    img_ci.usage        = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+                        | VK_IMAGE_USAGE_SAMPLED_BIT
+                        | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    img_ci.sharingMode  = VK_SHARING_MODE_EXCLUSIVE;
+    img_ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    if (vkCreateImage(m_vk->device, &img_ci, m_vk->allocator, &e.shared_image) != VK_SUCCESS) {
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] vkCreateImage (shared) failed");
+        return false;
+    }
+
+    // 2. Allocate exportable memory
+    VkMemoryRequirements mem_req{};
+    vkGetImageMemoryRequirements(m_vk->device, e.shared_image, &mem_req);
+
+    // Need a memory type that supports export
+    VkPhysicalDeviceMemoryProperties mem_props{};
+    vkGetPhysicalDeviceMemoryProperties(m_vk->physical_device, &mem_props);
+    uint32_t mem_type = 0xFFFFFFFFu;
+    for (uint32_t i = 0; i < mem_props.memoryTypeCount; ++i) {
+        if (!(mem_req.memoryTypeBits & (1u << i))) continue;
+        if (mem_props.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
+            mem_type = i; break;
+        }
+    }
+    if (mem_type == 0xFFFFFFFFu) {
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] no suitable memory type for shared image");
+        return false;
+    }
+
+    VkExportMemoryAllocateInfo export_mem{VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO};
+    export_mem.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+
+    VkMemoryAllocateInfo mem_alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    mem_alloc.pNext          = &export_mem;
+    mem_alloc.allocationSize = mem_req.size;
+    mem_alloc.memoryTypeIndex = mem_type;
+
+    if (vkAllocateMemory(m_vk->device, &mem_alloc, m_vk->allocator, &e.shared_memory) != VK_SUCCESS ||
+        vkBindImageMemory(m_vk->device, e.shared_image, e.shared_memory, 0) != VK_SUCCESS) {
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] shared image memory alloc/bind failed");
+        return false;
+    }
+
+    // 3. Export FD from VkDeviceMemory
+    VkMemoryGetFdInfoKHR get_fd_info{VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR};
+    get_fd_info.memory     = e.shared_memory;
+    get_fd_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+    int mem_fd = -1;
+    if (s_vkGetMemoryFdKHR(m_vk->device, &get_fd_info, &mem_fd) != VK_SUCCESS || mem_fd < 0) {
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] vkGetMemoryFdKHR failed");
+        return false;
+    }
+
+    // 4. GL: import memory, create texture backed by it, create FBO
+    if (!e.egl.valid() && !e.egl.create()) {
+        ::close(mem_fd);
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] EGL context create failed");
+        return false;
+    }
+    if (!e.egl.make_current()) {
+        ::close(mem_fd);
+        return false;
+    }
+
+    s_gl.CreateMemoryObjectsEXT(1, &e.gl_mem_obj);
+    s_gl.ImportMemoryFdEXT(e.gl_mem_obj, mem_req.size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, mem_fd);
+    // FD ownership transferred to GL on success; no ::close needed
+
+    glGenTextures(1, &e.gl_texture);
+    glBindTexture(GL_TEXTURE_2D, e.gl_texture);
+    s_gl.TexStorageMem2DEXT(GL_TEXTURE_2D, 1, GL_RGBA8, w, h, e.gl_mem_obj, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    s_gl.GenFramebuffers(1, &e.gl_fbo);
+    s_gl.BindFramebuffer(GL_FRAMEBUFFER, e.gl_fbo);
+    s_gl.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, e.gl_texture, 0);
+    const GLenum fbo_status = s_gl.CheckFramebufferStatus(GL_FRAMEBUFFER);
+    s_gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    e.egl.release();
+
+    if (fbo_status != GL_FRAMEBUFFER_COMPLETE) {
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] GL FBO incomplete: 0x{:x}", fbo_status);
+        return false;
+    }
+
+    // 5. Wrap shared VkImage as pl_tex (held by us initially)
+    {
+        struct pl_vulkan_wrap_params wp{};
+        wp.image  = e.shared_image;
+        wp.width  = static_cast<uint32_t>(w);
+        wp.height = static_cast<uint32_t>(h);
+        wp.format = e.shared_format;
+        wp.usage  = img_ci.usage;
+        e.pl_input_tex = pl_vulkan_wrap(m_pl_vk->gpu, &wp);
+    }
+    if (!e.pl_input_tex) {
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] pl_vulkan_wrap failed");
+        return false;
+    }
+
+    // 6. Create pl_output_tex (libplacebo renders here)
+    pl_fmt out_fmt = pl_find_fmt(m_pl_vk->gpu, PL_FMT_UNORM, 4, 8, 8,
+                                  static_cast<pl_fmt_caps>(PL_FMT_CAP_RENDERABLE | PL_FMT_CAP_SAMPLEABLE));
+    if (!out_fmt) {
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] pl_find_fmt RGBA8 failed");
+        return false;
+    }
+
+    pl_tex_params out_tp{};
+    out_tp.w          = w;
+    out_tp.h          = h;
+    out_tp.format     = out_fmt;
+    out_tp.renderable = true;
+    out_tp.sampleable = true;
+    out_tp.storable   = true;
+    e.pl_output_tex = pl_tex_create(m_pl_vk->gpu, &out_tp);
+    if (!e.pl_output_tex) {
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] pl_tex_create (output) failed");
+        return false;
+    }
+
+    // 7. Unwrap pl_output_tex to get VkImage, create ImGui view + descriptor
+    VkFormat out_vk_fmt = VK_FORMAT_UNDEFINED;
+    VkImageUsageFlags out_vk_usage = 0;
+    VkImage out_vk_img = pl_vulkan_unwrap(m_pl_vk->gpu, e.pl_output_tex, &out_vk_fmt, &out_vk_usage);
+
+    VkImageViewCreateInfo view_ci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view_ci.image            = out_vk_img;
+    view_ci.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+    view_ci.format           = out_vk_fmt != VK_FORMAT_UNDEFINED ? out_vk_fmt : VK_FORMAT_R8G8B8A8_UNORM;
+    view_ci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    if (vkCreateImageView(m_vk->device, &view_ci, m_vk->allocator, &e.output_image_view) != VK_SUCCESS) {
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] vkCreateImageView (output) failed");
+        return false;
+    }
+
+    VkSamplerCreateInfo samp_ci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    samp_ci.magFilter    = VK_FILTER_LINEAR;
+    samp_ci.minFilter    = VK_FILTER_LINEAR;
+    samp_ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samp_ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samp_ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samp_ci.maxLod       = 1.0f;
+    if (vkCreateSampler(m_vk->device, &samp_ci, m_vk->allocator, &e.output_sampler) != VK_SUCCESS) {
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] vkCreateSampler (output) failed");
+        return false;
+    }
+
+    e.descriptor_set = ImGui_ImplVulkan_AddTexture(
+        e.output_sampler, e.output_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    APP_DEBUG_LOG("[VideoPlayerPlacebo] shared image {}x{} created", w, h);
+    return true;
+}
+
+void VideoPlayerPlacebo::entry_destroy_shared_image(PlaceboEntry &e) {
+    if (!m_vk) return;
+
+    // Destroy pl textures (must not be held)
+    if (e.pl_input_tex)  { pl_tex_destroy(m_pl_vk->gpu, &e.pl_input_tex); }
+    if (e.pl_output_tex) { pl_tex_destroy(m_pl_vk->gpu, &e.pl_output_tex); }
+
+    // Destroy ImGui resources
+    entry_destroy_output_descriptor(e);
+
+    // GL cleanup
+    if (e.egl.valid()) {
+        if (e.egl.make_current()) {
+            if (e.gl_fbo)     { s_gl.DeleteFramebuffers(1, &e.gl_fbo);  e.gl_fbo = 0; }
+            if (e.gl_texture) { glDeleteTextures(1, &e.gl_texture);   e.gl_texture = 0; }
+            if (e.gl_mem_obj && s_gl.loaded)
+                s_gl.DeleteMemoryObjectsEXT(1, &e.gl_mem_obj);
+            e.gl_mem_obj = 0;
+            e.egl.release();
+        }
+    }
+
+    if (e.shared_memory != VK_NULL_HANDLE) {
+        vkFreeMemory(m_vk->device, e.shared_memory, m_vk->allocator);
+        e.shared_memory = VK_NULL_HANDLE;
+    }
+    if (e.shared_image != VK_NULL_HANDLE) {
+        vkDestroyImage(m_vk->device, e.shared_image, m_vk->allocator);
+        e.shared_image = VK_NULL_HANDLE;
+    }
+    e.shared_w = e.shared_h = 0;
+    e.pl_output_held = false;
+}
+
+// --------------------------------------------------------------------------
+// Semaphore sync
+// --------------------------------------------------------------------------
+bool VideoPlayerPlacebo::entry_create_sync(PlaceboEntry &e) {
+    if (!m_vk || !m_pl_vk || !s_gl.loaded) return false;
+
+    // Helper: create an exportable VkSemaphore and export its FD
+    auto make_exportable_sem = [&](VkSemaphore &out_vk, GLuint &out_gl) -> bool {
+        VkExportSemaphoreCreateInfo exp_ci{VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO};
+        exp_ci.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+        VkSemaphoreCreateInfo sem_ci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        sem_ci.pNext = &exp_ci;
+        if (vkCreateSemaphore(m_vk->device, &sem_ci, m_vk->allocator, &out_vk) != VK_SUCCESS)
+            return false;
+
+        VkSemaphoreGetFdInfoKHR get_fd{VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR};
+        get_fd.semaphore  = out_vk;
+        get_fd.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+        int fd = -1;
+        if (s_vkGetSemaphoreFdKHR(m_vk->device, &get_fd, &fd) != VK_SUCCESS || fd < 0)
+            return false;
+
+        if (!e.egl.make_current()) { ::close(fd); return false; }
+        s_gl.GenSemaphoresEXT(1, &out_gl);
+        s_gl.ImportSemaphoreFdEXT(out_gl, GL_HANDLE_TYPE_OPAQUE_FD_EXT, fd);
+        // GL takes ownership of fd on success
+        e.egl.release();
+        return out_gl != 0;
+    };
+
+    if (!make_exportable_sem(e.vk_ready_sem,   e.gl_ready_sem))   return false;
+    if (!make_exportable_sem(e.vk_release_sem, e.gl_release_sem)) return false;
+
+    // output_hold_sem: plain binary semaphore (no export needed)
+    {
+        struct pl_vulkan_sem_params sp{};
+        sp.type = VK_SEMAPHORE_TYPE_BINARY;
+        e.output_hold_sem = pl_vulkan_sem_create(m_pl_vk->gpu, &sp);
+    }
+    if (!e.output_hold_sem) return false;
+
+    // Interop command pool + buffer + fence for CPU waiting on output_hold_sem
+    VkCommandPoolCreateInfo pool_ci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    pool_ci.queueFamilyIndex = m_vk->queue_family;
+    pool_ci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    if (vkCreateCommandPool(m_vk->device, &pool_ci, m_vk->allocator, &e.interop_cmd_pool) != VK_SUCCESS)
+        return false;
+
+    VkCommandBufferAllocateInfo cmd_alloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    cmd_alloc.commandPool        = e.interop_cmd_pool;
+    cmd_alloc.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmd_alloc.commandBufferCount = 1;
+    if (vkAllocateCommandBuffers(m_vk->device, &cmd_alloc, &e.interop_cmd_buf) != VK_SUCCESS)
+        return false;
+
+    VkFenceCreateInfo fence_ci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    if (vkCreateFence(m_vk->device, &fence_ci, m_vk->allocator, &e.interop_fence) != VK_SUCCESS)
+        return false;
+
+    return true;
+}
+
+void VideoPlayerPlacebo::entry_destroy_sync(PlaceboEntry &e) {
+    if (!m_vk) return;
+
+    if (e.interop_fence    != VK_NULL_HANDLE) {
+        vkDestroyFence(m_vk->device, e.interop_fence, m_vk->allocator);
+        e.interop_fence = VK_NULL_HANDLE;
+    }
+    if (e.interop_cmd_pool != VK_NULL_HANDLE) {
+        vkDestroyCommandPool(m_vk->device, e.interop_cmd_pool, m_vk->allocator);
+        e.interop_cmd_pool = VK_NULL_HANDLE;
+        e.interop_cmd_buf  = VK_NULL_HANDLE;
+    }
+    if (e.output_hold_sem && m_pl_vk)
+        pl_vulkan_sem_destroy(m_pl_vk->gpu, &e.output_hold_sem);
+
+    // GL semaphore cleanup
+    if (e.egl.valid() && s_gl.loaded && e.egl.make_current()) {
+        if (e.gl_ready_sem)   { s_gl.DeleteSemaphoresEXT(1, &e.gl_ready_sem);   e.gl_ready_sem   = 0; }
+        if (e.gl_release_sem) { s_gl.DeleteSemaphoresEXT(1, &e.gl_release_sem); e.gl_release_sem = 0; }
+        e.egl.release();
+    }
+
+    if (e.vk_ready_sem   != VK_NULL_HANDLE) { vkDestroySemaphore(m_vk->device, e.vk_ready_sem,   m_vk->allocator); e.vk_ready_sem   = VK_NULL_HANDLE; }
+    if (e.vk_release_sem != VK_NULL_HANDLE) { vkDestroySemaphore(m_vk->device, e.vk_release_sem, m_vk->allocator); e.vk_release_sem = VK_NULL_HANDLE; }
+}
+
+// --------------------------------------------------------------------------
+// mpv OpenGL render context
+// --------------------------------------------------------------------------
+bool VideoPlayerPlacebo::entry_create_mpv(PlaceboEntry &e, const std::string &path, bool hwdec) {
+    e.mpv = mpv_create();
+    if (!e.mpv) return false;
+
+    mpv_set_option_string(e.mpv, "terminal",  "no");
+    mpv_set_option_string(e.mpv, "vo",        "libmpv");
+    mpv_set_option_string(e.mpv, "gpu-api",   "opengl");
+    mpv_set_option_string(e.mpv, "hwdec",     hwdec ? "nvdec" : "no");
+    mpv_set_option_string(e.mpv, "loop-file", "yes");
+    mpv_set_option_string(e.mpv, "pause",     "no");
+
+    if (mpv_initialize(e.mpv) < 0) {
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] mpv_initialize failed");
+        mpv_terminate_destroy(e.mpv);
+        e.mpv = nullptr;
+        return false;
+    }
+
+    // Create EGL context for this entry
+    if (!e.egl.valid() && !e.egl.create()) {
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] EGL create failed");
+        mpv_terminate_destroy(e.mpv); e.mpv = nullptr;
+        return false;
+    }
+    if (!e.egl.make_current()) {
+        mpv_terminate_destroy(e.mpv); e.mpv = nullptr;
+        return false;
+    }
+
+    mpv_opengl_init_params gl_init{};
+    gl_init.get_proc_address     = PlaceboEglContext::get_proc_address;
+    gl_init.get_proc_address_ctx = nullptr;
+
+    mpv_render_param params[] = {
+        {MPV_RENDER_PARAM_API_TYPE,          const_cast<char *>(MPV_RENDER_API_TYPE_OPENGL)},
+        {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &gl_init},
+        {MPV_RENDER_PARAM_INVALID,            nullptr},
+    };
+
+    if (mpv_render_context_create(&e.render_ctx, e.mpv, params) < 0) {
+        APP_DEBUG_LOG("[VideoPlayerPlacebo] mpv_render_context_create failed");
+        e.egl.release();
+        mpv_terminate_destroy(e.mpv); e.mpv = nullptr;
+        return false;
+    }
+
+    // Update callback – fired from mpv thread
+    mpv_render_context_set_update_callback(e.render_ctx,
+        [](void *ctx) {
+            auto *entry = static_cast<PlaceboEntry *>(ctx);
+            entry->frame_dirty.store(true, std::memory_order_release);
+        }, &e);
+
+    e.egl.release();
+
+    // Load file
+    const char *cmd[] = {"loadfile", path.c_str(), nullptr};
+    mpv_command(e.mpv, cmd);
+
+    if (e.resume_position_seconds > 0)
+        e.resume_seek_pending = true;
+
+    APP_DEBUG_LOG("[VideoPlayerPlacebo] mpv entry created: {}", path);
+    return true;
+}
+
+void VideoPlayerPlacebo::entry_destroy_mpv(PlaceboEntry &e) {
+    if (e.render_ctx) {
+        if (e.egl.make_current()) {
+            mpv_render_context_free(e.render_ctx);
+            e.render_ctx = nullptr;
+            e.egl.release();
+        }
+    }
+    if (e.mpv) {
+        mpv_terminate_destroy(e.mpv);
+        e.mpv = nullptr;
+    }
+    e.egl.destroy();
+}
+
+// --------------------------------------------------------------------------
+// Per-entry event polling
+// --------------------------------------------------------------------------
+void VideoPlayerPlacebo::entry_poll_events(PlaceboEntry &e) {
+    if (!e.mpv) return;
+    mpv_event *ev;
+    while ((ev = mpv_wait_event(e.mpv, 0)) && ev->event_id != MPV_EVENT_NONE) {
+        if (ev->event_id == MPV_EVENT_END_FILE) {
+            const auto *data = static_cast<mpv_event_end_file *>(ev->data);
+            if (data->reason == MPV_END_FILE_REASON_ERROR) {
+                APP_DEBUG_LOG("[VideoPlayerPlacebo] mpv end file error: {}", mpv_error_string(data->error));
+                e.load_failed = true;
+            }
+        }
+        if (ev->event_id == MPV_EVENT_VIDEO_RECONFIG && !e.load_failed) {
+            // Query new dimensions – ignore for now, keep existing shared image
+        }
+    }
+}
+
+// --------------------------------------------------------------------------
+// Per-frame render: GL → libplacebo → output tex (ImGui)
+// --------------------------------------------------------------------------
+void VideoPlayerPlacebo::entry_render_frame(PlaceboEntry &e) {
+    if (!e.mpv || !e.render_ctx || e.load_failed) return;
+    if (!m_pl_vk || !m_pl_renderer) return;
+
+    // ── Lazy shared image creation ──────────────────────────────────────────
+    if (e.shared_image == VK_NULL_HANDLE) {
+        int64_t dw = 1920, dh = 1080;
+        mpv_get_property(e.mpv, "dwidth",  MPV_FORMAT_INT64, &dw);
+        mpv_get_property(e.mpv, "dheight", MPV_FORMAT_INT64, &dh);
+        if (dw <= 0) dw = 1920;
+        if (dh <= 0) dh = 1080;
+        if (!entry_create_shared_image(e, static_cast<int>(dw), static_cast<int>(dh))) {
+            APP_DEBUG_LOG("[VideoPlayerPlacebo] entry_create_shared_image failed");
+            e.load_failed = true;
+            return;
+        }
+        if (!entry_create_sync(e)) {
+            APP_DEBUG_LOG("[VideoPlayerPlacebo] entry_create_sync failed");
+            e.load_failed = true;
+            return;
+        }
+        if (e.resume_seek_pending) {
+            const std::string seek_cmd = std::to_string(e.resume_position_seconds);
+            const char *sc[] = {"seek", seek_cmd.c_str(), "absolute", nullptr};
+            mpv_command(e.mpv, sc);
+            e.resume_seek_pending = false;
+        }
+    }
+
+    // ── If output was held from last frame, release it back to libplacebo ──
+    if (e.pl_output_held) {
+        struct pl_vulkan_release_params rp{};
+        rp.tex    = e.pl_output_tex;
+        rp.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        rp.qf     = m_vk->queue_family;
+        pl_vulkan_release_ex(m_pl_vk->gpu, &rp);
+        e.pl_output_held = false;
+    }
+
+    // ── GL: render mpv into FBO ─────────────────────────────────────────────
+    if (!e.egl.make_current()) return;
+
+    // For frames after the first, wait for Vulkan to release the input image
+    if (!e.first_gl_render && e.gl_release_sem) {
+        GLenum src_layout = GL_LAYOUT_COLOR_ATTACHMENT_EXT;
+        s_gl.WaitSemaphoreEXT(e.gl_release_sem, 0, nullptr, 1, &e.gl_texture, &src_layout);
+    }
+
+    // Render mpv frame into gl_fbo
+    int flip_y = 0;
+    mpv_opengl_fbo fbo_params{ static_cast<int>(e.gl_fbo), e.shared_w, e.shared_h, GL_RGBA8 };
+    mpv_render_param render_params[] = {
+        {MPV_RENDER_PARAM_OPENGL_FBO, &fbo_params},
+        {MPV_RENDER_PARAM_FLIP_Y,     &flip_y},
+        {MPV_RENDER_PARAM_INVALID,    nullptr},
+    };
+    mpv_render_context_render(e.render_ctx, render_params);
+
+    // Signal that GL has finished writing the input image
+    GLenum dst_layout = GL_LAYOUT_COLOR_ATTACHMENT_EXT;
+    s_gl.SignalSemaphoreEXT(e.gl_ready_sem, 0, nullptr, 1, &e.gl_texture, &dst_layout);
+
+    // Flush GL commands so signal is submitted to GPU
+    glFlush();
+    e.egl.release();
+
+    e.first_gl_render = false;
+
+    // ── Vulkan: hand shared image to libplacebo ─────────────────────────────
+    {
+        struct pl_vulkan_release_params rp{};
+        rp.tex       = e.pl_input_tex;
+        rp.layout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        rp.qf        = VK_QUEUE_FAMILY_EXTERNAL;
+        rp.semaphore = {e.vk_ready_sem, 0};
+        pl_vulkan_release_ex(m_pl_vk->gpu, &rp);
+    }
+
+    // ── libplacebo render ───────────────────────────────────────────────────
+    // Build input pl_frame
+    pl_frame image{};
+    image.num_planes = 1;
+    image.planes[0].texture          = e.pl_input_tex;
+    image.planes[0].components       = 4;
+    image.planes[0].component_mapping[0] = PL_CHANNEL_R;
+    image.planes[0].component_mapping[1] = PL_CHANNEL_G;
+    image.planes[0].component_mapping[2] = PL_CHANNEL_B;
+    image.planes[0].component_mapping[3] = PL_CHANNEL_A;
+    image.planes[0].flipped          = true; // OpenGL convention
+    image.crop = {0.0f, 0.0f,
+                  static_cast<float>(e.shared_w),
+                  static_cast<float>(e.shared_h)};
+    image.repr.sys    = PL_COLOR_SYSTEM_RGB;
+    image.repr.levels = PL_COLOR_LEVELS_FULL;
+    image.color       = pl_color_space_srgb;
+
+    // Build output pl_frame
+    pl_frame target{};
+    target.num_planes = 1;
+    target.planes[0].texture          = e.pl_output_tex;
+    target.planes[0].components       = 4;
+    target.planes[0].component_mapping[0] = PL_CHANNEL_R;
+    target.planes[0].component_mapping[1] = PL_CHANNEL_G;
+    target.planes[0].component_mapping[2] = PL_CHANNEL_B;
+    target.planes[0].component_mapping[3] = PL_CHANNEL_A;
+    target.crop = {0.0f, 0.0f,
+                   static_cast<float>(e.shared_w),
+                   static_cast<float>(e.shared_h)};
+    target.repr.sys    = PL_COLOR_SYSTEM_RGB;
+    target.repr.levels = PL_COLOR_LEVELS_FULL;
+    target.color       = pl_color_space_srgb;
+
+    pl_render_image(m_pl_renderer, &image, &target, &pl_render_default_params);
+
+    // Return input image to GL (signals vk_release_sem when libplacebo done)
+    {
+        struct pl_vulkan_hold_params hp{};
+        hp.tex       = e.pl_input_tex;
+        hp.layout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        hp.qf        = VK_QUEUE_FAMILY_EXTERNAL;
+        hp.semaphore = {e.vk_release_sem, 0};
+        pl_vulkan_hold_ex(m_pl_vk->gpu, &hp);
+    }
+
+    // Hold output image in SHADER_READ_ONLY so ImGui can sample it
+    {
+        struct pl_vulkan_hold_params hp{};
+        hp.tex       = e.pl_output_tex;
+        hp.layout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        hp.qf        = m_vk->queue_family;
+        hp.semaphore = {e.output_hold_sem, 0};
+        pl_vulkan_hold_ex(m_pl_vk->gpu, &hp);
+    }
+
+    // Flush all pending libplacebo GPU commands
+    pl_gpu_flush(m_pl_vk->gpu);
+
+    // Submit an empty command that waits on output_hold_sem + signals fence
+    // so we know on the CPU when the output is SHADER_READ_ONLY
+    {
+        vkResetCommandBuffer(e.interop_cmd_buf, 0);
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(e.interop_cmd_buf, &begin);
+        vkEndCommandBuffer(e.interop_cmd_buf);
+
+        VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        submit.waitSemaphoreCount   = 1;
+        submit.pWaitSemaphores      = &e.output_hold_sem;
+        submit.pWaitDstStageMask    = &wait_stage;
+        submit.commandBufferCount   = 1;
+        submit.pCommandBuffers      = &e.interop_cmd_buf;
+
+        vkResetFences(m_vk->device, 1, &e.interop_fence);
+        m_vk->queue_submit(1, &submit, e.interop_fence);
+        vkWaitForFences(m_vk->device, 1, &e.interop_fence, VK_TRUE, UINT64_MAX);
+    }
+
+    e.pl_output_held = true;
+    APP_DEBUG_LOG("[VideoPlayerPlacebo] frame rendered id={}", e.id);
+}
+
+// --------------------------------------------------------------------------
+// Cleanup helpers
+// --------------------------------------------------------------------------
+void VideoPlayerPlacebo::entry_destroy_output_descriptor(PlaceboEntry &e) {
+    if (!m_vk) return;
+    if (e.descriptor_set != VK_NULL_HANDLE) {
+        ImGui_ImplVulkan_RemoveTexture(e.descriptor_set);
+        e.descriptor_set = VK_NULL_HANDLE;
+    }
+    if (e.output_sampler != VK_NULL_HANDLE) {
+        vkDestroySampler(m_vk->device, e.output_sampler, m_vk->allocator);
+        e.output_sampler = VK_NULL_HANDLE;
+    }
+    if (e.output_image_view != VK_NULL_HANDLE) {
+        vkDestroyImageView(m_vk->device, e.output_image_view, m_vk->allocator);
+        e.output_image_view = VK_NULL_HANDLE;
+    }
+}
+
+void VideoPlayerPlacebo::entry_destroy_all(PlaceboEntry &e) {
+    // 1. Destroy mpv first (stops decoding/rendering)
+    entry_destroy_mpv(e);
+    // 2. GPU idle
+    if (m_pl_vk) pl_gpu_finish(m_pl_vk->gpu);
+    // 3. Release held textures
+    if (e.pl_output_held && e.pl_output_tex && m_pl_vk) {
+        struct pl_vulkan_release_params rp{};
+        rp.tex    = e.pl_output_tex;
+        rp.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        rp.qf     = m_vk ? m_vk->queue_family : VK_QUEUE_FAMILY_IGNORED;
+        pl_vulkan_release_ex(m_pl_vk->gpu, &rp);
+        e.pl_output_held = false;
+    }
+    // pl_input_tex starts held by user; destroy via pl_tex_destroy
+    // which handles this case (from pl_vulkan_wrap doc: safe to destroy if held)
+    // 4. Shared image / FBO
+    entry_destroy_shared_image(e);
+    // 5. Semaphores / interop resources
+    entry_destroy_sync(e);
+}
+
 void VideoPlayerPlacebo::shutdown() {
     if (!m_initialized && m_vk == nullptr)
         return;
 
-    if (m_player_bridge)
-        m_player_bridge->shutdown();
+    // GPU must be idle before destroying resources
+    if (m_vk)
+        vkDeviceWaitIdle(m_vk->device);
 
+    for (auto &e : m_entries)
+        entry_destroy_all(*e);
+
+    if (m_hover_player)
+        m_hover_player->shutdown();
+
+    m_entries.clear();
     destroy_placeholder_texture();
+    destroy_placebo_gpu();
 
     m_initialized = false;
     m_vk = nullptr;
-    m_open_sources.clear();
 }
 
 bool VideoPlayerPlacebo::initialized() const noexcept {

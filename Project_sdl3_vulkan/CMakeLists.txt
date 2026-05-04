@@ -36,6 +36,9 @@ pkg_check_modules(SDL3 REQUIRED sdl3)
 pkg_check_modules(VULKAN REQUIRED vulkan)
 pkg_check_modules(FREETYPE REQUIRED freetype2)
 pkg_check_modules(PLUTOSVG REQUIRED plutosvg)
+pkg_check_modules(EGL REQUIRED egl)
+pkg_check_modules(GL REQUIRED gl)
+pkg_check_modules(LIBPLACEBO REQUIRED libplacebo)
 find_package(reflectcpp CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(WebP CONFIG REQUIRED)
@@ -98,6 +101,7 @@ add_executable(example_sdl3_vulkan
     # UI — video subsystem
     code/ui/media/video/player/video_player.cpp
     code/ui/media/video/player/video_player_placebo.cpp
+    code/ui/media/video/player/placebo_egl_context.cpp
     code/ui/media/video/downloader/video_downloader.cpp
     code/ui/media/video/video_preview/video_hover_preview.cpp
     code/ui/media/video/video_preview/video_seek_preview.cpp
@@ -197,6 +201,8 @@ target_include_directories(example_sdl3_vulkan SYSTEM PRIVATE
     ${WEBP_INCLUDE_DIR}
     ${MPV_INCLUDE_DIRS}  # external/mpv/include (bundled headers)
     ${LIBPLACEBO_INCLUDE_DIRS}
+    ${EGL_INCLUDE_DIRS}
+    ${GL_INCLUDE_DIRS}
 )
 
 # ── Compile options ───────────────────────────────────────────────────────────
@@ -250,5 +256,8 @@ target_link_libraries(example_sdl3_vulkan PRIVATE
     WebP::webp
     CURL::libcurl
     ${MPV_LIBRARIES}
+    ${EGL_LIBRARIES}
+    ${GL_LIBRARIES}
+    ${LIBPLACEBO_LIBRARIES}
     ${CMAKE_DL_LIBS}   # dlopen/dlclose for Vulkan loader
 )

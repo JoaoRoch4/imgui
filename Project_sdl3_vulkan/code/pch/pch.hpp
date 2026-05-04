@@ -60,3 +60,14 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include <webp/decode.h>
+
+
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <GL/gl.h>
+#include <GL/glext.h>
+
+
+#include <libplacebo/log.h>
+#include <libplacebo/vulkan.h>
+#include <libplacebo/renderer.h>

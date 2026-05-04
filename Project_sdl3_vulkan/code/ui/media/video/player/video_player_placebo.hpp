@@ -109,7 +109,7 @@ public:
         HistoryPreview *preview = nullptr,
         std::function<void(const std::string &)> on_fix_videos = nullptr,
         std::function<bool(const std::string &)> is_startup_videos_fixed = nullptr,
-        std::function<bool()> on_get_app_fullscreen = nullptr,
+ std::function<bool()> on_get_app_fullscreen = nullptr,
         std::function<void(bool)> on_set_app_fullscreen = nullptr);
 
     static constexpr ImVec2 k_preview_size{320.0f, 180.0f};
@@ -145,7 +145,7 @@ private:
     std::function<void(const std::string &)> m_on_fix_videos;
     std::function<bool(const std::string &)> m_is_startup_videos_fixed;
     std::function<bool()> m_on_get_app_fullscreen;
-    std::function<void(bool)> m_on_set_app_fullscreen;
+    std::function<void(int)> m_on_set_app_fullscreen;
 
     int m_placeholder_width = 256;
     int m_placeholder_height = 144;

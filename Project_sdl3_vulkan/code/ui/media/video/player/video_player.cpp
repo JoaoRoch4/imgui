@@ -27,6 +27,8 @@
 // Extension sets
 // ============================================================================
 
+using std::move;
+
 namespace {
 
 const std::unordered_set<std::string> k_video_exts = {
@@ -108,8 +110,6 @@ const std::unordered_set<std::string> k_streaming_hosts = {
 
 } // namespace
 
-
-
 // ============================================================================
 // VideoPlayer constructor / destructor
 // ============================================================================
@@ -154,11 +154,6 @@ void VideoPlayer::bind_context(vulkan_context *vk) {
 }
 
 void VideoPlayer::setup(vulkan_context *vk) {
-    if (m_initialized)
-        return;
-    if (!vk)
-        return;
-
     APP_DEBUG_LOG("[VideoPlayer] setup");
     m_main_thread_id = std::this_thread::get_id();
     m_vk = vk;
@@ -166,27 +161,9 @@ void VideoPlayer::setup(vulkan_context *vk) {
         static_cast<VkDeviceSize>(1920) * 1920 * 4;
     m_seek_uploader->init(m_vk,
                          static_cast<size_t>(k_max_seek_preview_bytes));
+    m_hover->setup(vk);
     m_initialized = true;
-}
-
-bool VideoPlayer::ensure_setup() {
-    if (m_initialized)
-        return true;
-    if (!m_vk)
-        return false;
-    setup(m_vk);
-    return m_initialized;
-}
-
-bool VideoPlayer::ensure_hover_setup() {
-    if (!ensure_setup())
-        return false;
-    if (m_hover_initialized)
-        return true;
-
-    m_hover->setup(m_vk);
     m_hover_initialized = true;
-    return true;
 }
 
 void VideoPlayer::shutdown() {
@@ -194,16 +171,8 @@ void VideoPlayer::shutdown() {
     if (!m_vk)
         return;
 
-    if (!m_initialized) {
-        m_hover_initialized = false;
-        m_vk = nullptr;
-        APP_DEBUG_LOG("[VideoPlayer] shutdown done");
-        return;
-    }
-
     // Stop all background threads before vkDeviceWaitIdle
-    if (m_hover_initialized)
-        m_hover->stop_thread();
+    m_hover->stop_thread();
     for (auto &ep : m_entries)
         ep->seek_preview.stop_thread();
 
@@ -223,12 +192,9 @@ void VideoPlayer::shutdown() {
     }
     m_entries.clear();
 
-    if (m_hover_initialized)
-        m_hover->shutdown();
+    m_hover->shutdown();
     m_seek_uploader->shutdown();
 
-    m_initialized = false;
-    m_hover_initialized = false;
     m_vk = nullptr;
     APP_DEBUG_LOG("[VideoPlayer] shutdown done");
 }
@@ -306,9 +272,6 @@ bool VideoPlayer::add_from_path(const std::filesystem::path &path,
                                 bool hwdec_enabled,
                                 int resume_position_seconds,
                                 const std::string &initial_osd_message) {
-    if (!ensure_setup())
-        return false;
-
     APP_DEBUG_LOG("[VideoPlayer] add_from_path: {}", path.string());
     auto ep = std::make_unique<VideoEntry>();
     ep->title = title.empty() ? path.filename().string() : title;
@@ -328,10 +291,7 @@ bool VideoPlayer::add_from_path(const std::filesystem::path &path,
     if (ep->hwdec_enabled)
         mpv_set_option_string(ep->mpv, "hwdec-codecs", "h264,hevc,av1,vp9,mpeg4,vc1");
     mpv_set_option_string(ep->mpv, "vo", "libmpv");
-    if (ep->kind == "gif") {
-        mpv_set_option_string(ep->mpv, "loop-file", "inf");
-        ep->loop = true;
-    } else if (m_global_loop_enabled) {
+    if (ep->kind == "gif" || m_global_loop_enabled) {
         mpv_set_option_string(ep->mpv, "loop-file", "inf");
         ep->loop = true;
     }
@@ -389,9 +349,6 @@ bool VideoPlayer::add_from_url(const std::string &url,
                                bool hwdec_enabled,
                                int resume_position_seconds,
                                const std::string &initial_osd_message) {
-    if (!ensure_setup())
-        return false;
-
     APP_DEBUG_LOG("[VideoPlayer] add_from_url: {} (title='{}')", url, title);
     auto ep = std::make_unique<VideoEntry>();
     ep->title = title;
@@ -463,202 +420,309 @@ bool VideoPlayer::add_from_url(const std::string &url,
 }
 
 // ============================================================================
-// GPU resource management
+// create_gpu_resources
 // ============================================================================
-
-bool VideoPlayer::create_gpu_resources(VideoEntry &e) {
+ 
+/**
+ * @brief Allocates all Vulkan resources needed to display one video entry.
+ *
+ * Called once after VIDEO_RECONFIG delivers the decoded frame dimensions.
+ * If the dimensions change later the resources are destroyed and recreated.
+ *
+ * The staging pipeline uses two independent slots (double buffering) so the
+ * GPU can finish reading slot N while slot N+1 is already being filled by mpv.
+ * A single shared VkCommandPool covers both slots; per-slot VkCommandBuffers and
+ * VkFences track each upload independently.
+ *
+ * After allocation the image is immediately transitioned from UNDEFINED to
+ * SHADER_READ_ONLY_OPTIMAL so ImGui can sample it before the first real frame
+ * arrives.  Slot 0's command buffer and fence are borrowed for this one-time
+ * bootstrap submit and reset before the first real upload.
+ *
+ * @param e  The video entry to initialise.
+ * @return true on success; false if any critical Vulkan call fails.
+ */
+bool VideoPlayer::create_gpu_resources(VideoEntry &e)
+{
     APP_DEBUG_LOG("[VideoPlayer] create_gpu_resources id={} {}x{}", e.id, e.video_w, e.video_h);
-    const int w = e.video_w;
-    const int h = e.video_h;
+ 
+    const int w = e.video_w;                                         // frame width in pixels
+    const int h = e.video_h;                                         // frame height in pixels
+ 
+    // Byte size of one complete RGBA frame: width × height × 4 channels.
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(w) * h * 4;
-
-    // -- VkImage (device-local, OPTIMAL tiling) ------------------------------
+ 
+    // -------------------------------------------------------------------------
+    // VkImage — device-local, OPTIMAL tiling, sampled + transfer-dst usage.
+    // -------------------------------------------------------------------------
     {
-        VkImageCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-        info.imageType = VK_IMAGE_TYPE_2D;
-        info.format = VK_FORMAT_R8G8B8A8_UNORM;
-        info.extent = {static_cast<uint32_t>(w), static_cast<uint32_t>(h), 1u};
-        info.mipLevels = 1;
-        info.arrayLayers = 1;
-        info.samples = VK_SAMPLE_COUNT_1_BIT;
-        info.tiling = VK_IMAGE_TILING_OPTIMAL;
-        info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImageCreateInfo info  = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        info.imageType          = VK_IMAGE_TYPE_2D;
+        info.format             = VK_FORMAT_R8G8B8A8_UNORM;                      // RGBA 8-bit
+        info.extent             = {static_cast<uint32_t>(w),
+                                   static_cast<uint32_t>(h), 1u};                // 2-D single-depth
+        info.mipLevels          = 1;                                              // no mip chain
+        info.arrayLayers        = 1;                                              // single layer
+        info.samples            = VK_SAMPLE_COUNT_1_BIT;                         // no MSAA
+        info.tiling             = VK_IMAGE_TILING_OPTIMAL;                        // GPU-optimal layout
+        info.usage              = VK_IMAGE_USAGE_SAMPLED_BIT                      // ImGui samples it
+                                | VK_IMAGE_USAGE_TRANSFER_DST_BIT;               // copy target
+        info.sharingMode        = VK_SHARING_MODE_EXCLUSIVE;                     // one queue family
+        info.initialLayout      = VK_IMAGE_LAYOUT_UNDEFINED;                     // transitioned below
+ 
         if (vkCreateImage(m_vk->device, &info, m_vk->allocator, &e.image) != VK_SUCCESS)
-            return false;
-
+            return false;                                                          // hard failure
+ 
         VkMemoryRequirements req{};
-        vkGetImageMemoryRequirements(m_vk->device, e.image, &req);
-
-        VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        alloc.allocationSize = req.size;
-        alloc.memoryTypeIndex = find_memory_type(m_vk->physical_device,
-                                                 req.memoryTypeBits,
-                                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        vkGetImageMemoryRequirements(m_vk->device, e.image, &req);               // query size/alignment
+ 
+        VkMemoryAllocateInfo alloc  = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.allocationSize        = req.size;
+        alloc.memoryTypeIndex       = find_memory_type(m_vk->physical_device,
+                                                       req.memoryTypeBits,
+                                                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT); // GPU-only
+ 
         if (vkAllocateMemory(m_vk->device, &alloc, m_vk->allocator, &e.image_memory) != VK_SUCCESS)
-            return false;
-
-        vkBindImageMemory(m_vk->device, e.image, e.image_memory, 0);
+            return false;                                                          // hard failure
+ 
+        vkBindImageMemory(m_vk->device, e.image, e.image_memory, 0);             // bind at offset 0
     }
-
-    // -- VkImageView ---------------------------------------------------------
+ 
+    // -------------------------------------------------------------------------
+    // VkImageView — covers the full colour subresource.
+    // -------------------------------------------------------------------------
     {
-        VkImageViewCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        info.image = e.image;
-        info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        info.format = VK_FORMAT_R8G8B8A8_UNORM;
-        info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        VkImageViewCreateInfo info  = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        info.image                  = e.image;
+        info.viewType               = VK_IMAGE_VIEW_TYPE_2D;
+        info.format                 = VK_FORMAT_R8G8B8A8_UNORM;
+        info.subresourceRange       = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};  // mip 0, layer 0
         vkCreateImageView(m_vk->device, &info, m_vk->allocator, &e.image_view);
     }
-
-    // -- VkSampler -----------------------------------------------------------
+ 
+    // -------------------------------------------------------------------------
+    // VkSampler — linear filtering, clamp-to-border (black).
+    // -------------------------------------------------------------------------
     {
-        VkSamplerCreateInfo info = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-        info.magFilter = VK_FILTER_LINEAR;
-        info.minFilter = VK_FILTER_LINEAR;
-        info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-        info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-        info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+        VkSamplerCreateInfo info  = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        info.magFilter            = VK_FILTER_LINEAR;                             // smooth upscale
+        info.minFilter            = VK_FILTER_LINEAR;                             // smooth downscale
+        info.addressModeU         = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;     // no wrap on X
+        info.addressModeV         = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;     // no wrap on Y
+        info.borderColor          = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;          // black letterbox
         vkCreateSampler(m_vk->device, &info, m_vk->allocator, &e.sampler);
     }
-
-    // -- ImGui descriptor (registers with ImGui_ImplVulkan) ------------------
+ 
+    // -------------------------------------------------------------------------
+    // ImGui descriptor — registers the sampler + view as a draw-able texture.
+    // -------------------------------------------------------------------------
     e.descriptor_set = ImGui_ImplVulkan_AddTexture(
         e.sampler, e.image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-    // -- Staging buffer (HOST_VISIBLE, persistently mapped) ------------------
+ 
+    // -------------------------------------------------------------------------
+    // Command pool — shared by both staging slots, reset per command buffer.
+    // -------------------------------------------------------------------------
     {
-        VkBufferCreateInfo info = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-        info.size = bytes;
-        info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-        vkCreateBuffer(m_vk->device, &info, m_vk->allocator, &e.staging_buf);
-
-        VkMemoryRequirements req{};
-        vkGetBufferMemoryRequirements(m_vk->device, e.staging_buf, &req);
-
-        VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        alloc.allocationSize = req.size;
-        alloc.memoryTypeIndex = find_memory_type(
-            m_vk->physical_device, req.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-        vkAllocateMemory(m_vk->device, &alloc, m_vk->allocator, &e.staging_mem);
-        vkBindBufferMemory(m_vk->device, e.staging_buf, e.staging_mem, 0);
-        vkMapMemory(m_vk->device, e.staging_mem, 0, bytes, 0, &e.staging_mapped);
-    }
-
-    // -- Dedicated command pool (resettable) ---------------------------------
-    {
-        VkCommandPoolCreateInfo info = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-        info.queueFamilyIndex = m_vk->queue_family;
-        info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        VkCommandPoolCreateInfo info  = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        info.queueFamilyIndex         = m_vk->queue_family;
+        info.flags                    = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT; // individual resets
         vkCreateCommandPool(m_vk->device, &info, m_vk->allocator, &e.cmd_pool);
-
-        VkCommandBufferAllocateInfo alloc = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        alloc.commandPool = e.cmd_pool;
-        alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        alloc.commandBufferCount = 1;
-        vkAllocateCommandBuffers(m_vk->device, &alloc, &e.cmd_buf);
     }
-
-    // -- Reusable fence for upload synchronisation ---------------------------
-    {
-        VkFenceCreateInfo info = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-        vkCreateFence(m_vk->device, &info, m_vk->allocator, &e.upload_fence);
+ 
+    // -------------------------------------------------------------------------
+    // Double-buffered staging slots.
+    //
+    // Iterating with index rather than range-for so we can log the slot index.
+    // Each slot owns: a host-visible staging buffer (persistently mapped so mpv
+    // can render straight into it), one command buffer, and one fence.
+    // -------------------------------------------------------------------------
+    for (std::size_t i = 0; i < VideoEntry::k_staging_count; ++i) {
+        VideoEntry::StagingSlot &slot = e.staging_slots[i];                       // reference to slot i
+ 
+        // -- Staging buffer: HOST_VISIBLE | HOST_COHERENT ----------------------
+        VkBufferCreateInfo buf_info  = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        buf_info.size                = bytes;                                      // one full RGBA frame
+        buf_info.usage               = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;         // source for image copy
+        vkCreateBuffer(m_vk->device, &buf_info, m_vk->allocator, &slot.buf);
+ 
+        VkMemoryRequirements req{};
+        vkGetBufferMemoryRequirements(m_vk->device, slot.buf, &req);
+ 
+        VkMemoryAllocateInfo alloc  = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.allocationSize        = req.size;
+        alloc.memoryTypeIndex       = find_memory_type(
+            m_vk->physical_device, req.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT   |                               // CPU can write
+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);                                // no flush required
+ 
+        vkAllocateMemory(m_vk->device, &alloc, m_vk->allocator, &slot.mem);
+        vkBindBufferMemory(m_vk->device, slot.buf, slot.mem, 0);
+ 
+        // Persistent map: mpv will render pixel data directly into this pointer
+        // every frame, removing the intermediate pixel_buf → staging memcpy.
+        vkMapMemory(m_vk->device, slot.mem, 0, bytes, 0, &slot.mapped);
+ 
+        // -- Command buffer (one per slot, independent of the other) -----------
+        VkCommandBufferAllocateInfo cmd_alloc  = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        cmd_alloc.commandPool                  = e.cmd_pool;                      // from the shared pool
+        cmd_alloc.level                        = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cmd_alloc.commandBufferCount           = 1;
+        vkAllocateCommandBuffers(m_vk->device, &cmd_alloc, &slot.cmd);
+ 
+        // -- Fence (unsignaled; signaled by GPU after upload completes) --------
+        VkFenceCreateInfo fence_info = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};     // no SIGNALED flag
+        vkCreateFence(m_vk->device, &fence_info, m_vk->allocator, &slot.fence);
+ 
+        slot.in_flight = false;                                                    // slot is free initially
     }
-
-    // -- CPU pixel buffer ----------------------------------------------------
-    e.pixel_buf.resize(static_cast<size_t>(w) * h * 4);
-
-    // -- Transition image to SHADER_READ_ONLY so it can be sampled immediately
+ 
+    // Start writing to slot 0 on the first upload.
+    e.staging_write_idx = 0;
+ 
+    // -------------------------------------------------------------------------
+    // Initial layout transition: UNDEFINED → SHADER_READ_ONLY_OPTIMAL.
+    //
+    // ImGui will try to sample the texture before the first video frame arrives.
+    // We must put the image in SHADER_READ_ONLY_OPTIMAL immediately so sampling
+    // a not-yet-uploaded texture does not trigger a validation error.
+    //
+    // Slot 0's command buffer and fence are borrowed for this one-time submit
+    // and then reset so the slot is ready for its first real upload.
+    // -------------------------------------------------------------------------
     {
         VkCommandBufferBeginInfo begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(e.cmd_buf, &begin);
-
-        VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        barrier.image = e.image;
-        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        barrier.srcAccessMask = 0;
-        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(e.cmd_buf,
-                             VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                             0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-        vkEndCommandBuffer(e.cmd_buf);
-
-        VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;               // record once, submit once
+        vkBeginCommandBuffer(e.staging_slots[0].cmd, &begin);
+ 
+        VkImageMemoryBarrier barrier  = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        barrier.oldLayout             = VK_IMAGE_LAYOUT_UNDEFINED;                // freshly allocated
+        barrier.newLayout             = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.image                 = e.image;
+        barrier.subresourceRange      = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        barrier.srcAccessMask         = 0;                                         // no prior access to flush
+        barrier.dstAccessMask         = VK_ACCESS_SHADER_READ_BIT;               // fragment shader will read
+ 
+        vkCmdPipelineBarrier(e.staging_slots[0].cmd,
+                             VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,                   // earliest stage
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,               // wait before sampling
+                             0, 0, nullptr, 0, nullptr,
+                             1, &barrier);
+ 
+        vkEndCommandBuffer(e.staging_slots[0].cmd);
+ 
+        VkSubmitInfo submit       = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
         submit.commandBufferCount = 1;
-        submit.pCommandBuffers = &e.cmd_buf;
-        m_vk->queue_submit(1, &submit, e.upload_fence);
-        vkWaitForFences(m_vk->device, 1, &e.upload_fence, VK_TRUE, UINT64_MAX);
-        vkResetFences(m_vk->device, 1, &e.upload_fence);
-        vkResetCommandBuffer(e.cmd_buf, 0);
+        submit.pCommandBuffers    = &e.staging_slots[0].cmd;
+ 
+        // Submit with the per-slot fence and wait synchronously.
+        // Resource creation is infrequent so a stall here is acceptable.
+        m_vk->queue_submit(1, &submit, e.staging_slots[0].fence);
+        vkWaitForFences(m_vk->device, 1, &e.staging_slots[0].fence, VK_TRUE, UINT64_MAX);
+        vkResetFences(m_vk->device, 1, &e.staging_slots[0].fence);               // ready for first upload
+        vkResetCommandBuffer(e.staging_slots[0].cmd, 0);                          // ready to record again
     }
-
+ 
     return true;
 }
+ 
 
-void VideoPlayer::destroy_gpu_resources(VideoEntry &e) {
+// ============================================================================
+// destroy_gpu_resources
+// ============================================================================
+ 
+/**
+ * @brief Releases all Vulkan resources owned by a VideoEntry.
+ *
+ * Must only be called after vkDeviceWaitIdle() has confirmed no GPU work
+ * references these resources — the callers in shutdown() and draw() guarantee
+ * this.  Each handle is nulled after destruction so the function is safe to
+ * call more than once (no double-free).
+ *
+ * Destroying the command pool implicitly frees every command buffer allocated
+ * from it, so we null the per-slot cmd handles rather than calling
+ * vkFreeCommandBuffers individually.
+ *
+ * @param e  The video entry whose Vulkan resources are to be freed.
+ */
+void VideoPlayer::destroy_gpu_resources(VideoEntry &e)
+{
     APP_DEBUG_LOG("[VideoPlayer] destroy_gpu_resources id={}", e.id);
-    e.upload_in_flight = false;
-    e.last_upload_time = {};
+ 
+    // Reset the upload-tracking state to a clean baseline.
+    e.staging_write_idx = 0;
+    e.last_upload_time  = {};                                                      // epoch — no last upload
+ 
+    // -- ImGui descriptor (unregisters the texture from the ImGui draw lists) -
     if (e.descriptor_set != VK_NULL_HANDLE) {
-        ImGui_ImplVulkan_RemoveTexture(e.descriptor_set);
+        ImGui_ImplVulkan_RemoveTexture(e.descriptor_set);                         // deregister first
         e.descriptor_set = VK_NULL_HANDLE;
     }
+ 
+    // -- Sampler ---------------------------------------------------------------
     if (e.sampler != VK_NULL_HANDLE) {
         vkDestroySampler(m_vk->device, e.sampler, m_vk->allocator);
         e.sampler = VK_NULL_HANDLE;
     }
+ 
+    // -- Image view ------------------------------------------------------------
     if (e.image_view != VK_NULL_HANDLE) {
         vkDestroyImageView(m_vk->device, e.image_view, m_vk->allocator);
         e.image_view = VK_NULL_HANDLE;
     }
+ 
+    // -- Device-local image ----------------------------------------------------
     if (e.image != VK_NULL_HANDLE) {
         vkDestroyImage(m_vk->device, e.image, m_vk->allocator);
         e.image = VK_NULL_HANDLE;
     }
+ 
+    // -- Image backing memory --------------------------------------------------
     if (e.image_memory != VK_NULL_HANDLE) {
         vkFreeMemory(m_vk->device, e.image_memory, m_vk->allocator);
         e.image_memory = VK_NULL_HANDLE;
     }
-    if (e.upload_fence != VK_NULL_HANDLE) {
-        vkDestroyFence(m_vk->device, e.upload_fence, m_vk->allocator);
-        e.upload_fence = VK_NULL_HANDLE;
-    }
-    // Destroying the pool also frees the command buffer
+ 
+    // -- Command pool (implicitly frees all command buffers from both slots) ---
+    // Destroying the pool first avoids vkFreeCommandBuffers on each slot, which
+    // would be redundant and potentially racy if a buffer was still allocated.
     if (e.cmd_pool != VK_NULL_HANDLE) {
         vkDestroyCommandPool(m_vk->device, e.cmd_pool, m_vk->allocator);
-        e.cmd_pool = VK_NULL_HANDLE;
-        e.cmd_buf = VK_NULL_HANDLE;
+        e.cmd_pool = VK_NULL_HANDLE;                                               // pool is gone
+ 
+        // Null out per-slot cmd handles — the backing objects no longer exist.
+        for (auto &slot : e.staging_slots)
+            slot.cmd = VK_NULL_HANDLE;
     }
-    if (e.staging_buf != VK_NULL_HANDLE) {
-        if (e.staging_mapped) {
-            vkUnmapMemory(m_vk->device, e.staging_mem);
-            e.staging_mapped = nullptr;
+ 
+    // -- Double-buffered staging slots (buffer / memory / fence per slot) -----
+    for (auto &slot : e.staging_slots) {
+        if (slot.buf != VK_NULL_HANDLE) {
+            if (slot.mapped != nullptr) {
+                // The Vulkan spec requires memory to be unmapped before freeing.
+                vkUnmapMemory(m_vk->device, slot.mem);                            // release persistent CPU mapping
+                slot.mapped = nullptr;
+            }
+            vkDestroyBuffer(m_vk->device, slot.buf, m_vk->allocator);
+            slot.buf = VK_NULL_HANDLE;
         }
-        vkDestroyBuffer(m_vk->device, e.staging_buf, m_vk->allocator);
-        e.staging_buf = VK_NULL_HANDLE;
-    }
-    if (e.staging_mem != VK_NULL_HANDLE) {
-        vkFreeMemory(m_vk->device, e.staging_mem, m_vk->allocator);
-        e.staging_mem = VK_NULL_HANDLE;
+        if (slot.mem != VK_NULL_HANDLE) {
+            vkFreeMemory(m_vk->device, slot.mem, m_vk->allocator);
+            slot.mem = VK_NULL_HANDLE;
+        }
+        if (slot.fence != VK_NULL_HANDLE) {
+            vkDestroyFence(m_vk->device, slot.fence, m_vk->allocator);
+            slot.fence = VK_NULL_HANDLE;
+        }
+        slot.in_flight = false;                                                    // slot can be reinitialised
     }
 }
+
 
 // ============================================================================
 // Hover thumbnail / seek thumbnail — delegated to child classes
 // ============================================================================
 
 VkDescriptorSet VideoPlayer::hover_thumbnail(const std::string &source) {
-    if (!ensure_hover_setup())
-        return VK_NULL_HANDLE;
-
     static std::string s_last_hover_source;
     if (s_last_hover_source != source) {
         APP_DEBUG_LOG("[VideoPlayer] hover_thumbnail: {}", source);
@@ -668,9 +732,6 @@ VkDescriptorSet VideoPlayer::hover_thumbnail(const std::string &source) {
 }
 
 bool VideoPlayer::save_hover_frame(const std::filesystem::path &path) {
-    if (!m_hover_initialized)
-        return false;
-
     APP_DEBUG_LOG("[VideoPlayer] save_hover_frame: {}", path.string());
     return m_hover->save_frame(path);
 }
@@ -695,194 +756,371 @@ VkDescriptorSet VideoPlayer::get_open_thumbnail(const std::string &source) const
 // Per-frame upload
 // ============================================================================
 
-bool VideoPlayer::upload_frame(VideoEntry &e) {
-    if (!e.staging_mapped || e.video_w <= 0 || e.video_h <= 0)
+// ============================================================================
+// upload_frame
+// ============================================================================
+ 
+/**
+ * @brief Renders the current mpv video frame to a staging buffer and issues a
+ *        GPU copy into the device-local texture.
+ *
+ * Two staging slots are maintained in a ping-pong fashion.  Before rendering,
+ * the function selects the preferred slot (e.staging_write_idx).  If that slot
+ * is still in flight (GPU has not yet finished the previous copy) the other
+ * slot is tried.  If both slots are in flight the frame is skipped and the
+ * caller must retry on the next tick — this path is extremely rare in practice
+ * because vkCmdCopyBufferToImage typically completes in under one frame period.
+ *
+ * mpv renders pixel data directly into the persistently-mapped host pointer
+ * (slot.mapped), eliminating the intermediate pixel_buf → staging memcpy that
+ * was present in the previous version.
+ *
+ * @param e  The video entry to upload a frame for.
+ * @return true if a frame was successfully submitted to the GPU; false if no
+ *         available slot was found or mpv had no new frame ready.
+ */
+bool VideoPlayer::upload_frame(VideoEntry &e)
+{
+    // Guard against calling before GPU resources are created.
+    if (e.video_w <= 0 || e.video_h <= 0)
         return false;
-
-    // Never block the UI thread waiting on a prior upload.
-    if (e.upload_in_flight) {
-        const VkResult fence_status = vkGetFenceStatus(m_vk->device, e.upload_fence);
-        if (fence_status == VK_NOT_READY)
-            return false;
-        if (fence_status == VK_SUCCESS) {
-            vkResetFences(m_vk->device, 1, &e.upload_fence);
-            vkResetCommandBuffer(e.cmd_buf, 0);
-            e.upload_in_flight = false;
+ 
+    // -------------------------------------------------------------------------
+    // Step 1 — select a staging slot that is not currently being read by the GPU.
+    //
+    // Prefer the designated write slot; fall back to the other if it is busy.
+    // -------------------------------------------------------------------------
+    std::size_t slot_idx                = e.staging_write_idx;                    // preferred slot
+    VideoEntry::StagingSlot *slot       = &e.staging_slots[slot_idx];
+ 
+    if (slot->in_flight) {
+        // Poll the GPU fence — VK_SUCCESS means the upload finished.
+        const VkResult preferred_status = vkGetFenceStatus(m_vk->device, slot->fence);
+        if (preferred_status == VK_SUCCESS) {
+            // GPU is done — reset resources and reuse the slot.
+            vkResetFences(m_vk->device, 1, &slot->fence);
+            vkResetCommandBuffer(slot->cmd, 0);
+            slot->in_flight = false;
+        } else {
+            // Preferred slot is still busy.  Try the alternate slot.
+            const std::size_t alt_idx          = (slot_idx + 1) % VideoEntry::k_staging_count;
+            VideoEntry::StagingSlot *alt        = &e.staging_slots[alt_idx];
+ 
+            if (alt->in_flight) {
+                // Both slots in flight — the GPU is behind the render thread.
+                // Skip this frame; frame_dirty stays true and we retry next tick.
+                const VkResult alt_status = vkGetFenceStatus(m_vk->device, alt->fence);
+                if (alt_status != VK_SUCCESS)
+                    return false;                                                   // no free slot available
+ 
+                // Alt slot just finished — reset it.
+                vkResetFences(m_vk->device, 1, &alt->fence);
+                vkResetCommandBuffer(alt->cmd, 0);
+                alt->in_flight = false;
+            }
+ 
+            // Switch to the alternate slot for this upload.
+            slot_idx = alt_idx;
+            slot     = alt;
         }
     }
-
+ 
+    // -------------------------------------------------------------------------
+    // Step 2 — render the current video frame directly into the staging buffer.
+    //
+    // MPV_RENDER_PARAM_SW_POINTER is set to slot->mapped, which is the
+    // persistently-mapped host pointer for this slot's VkDeviceMemory.  libmpv
+    // writes decoded and colour-converted pixel data straight into GPU-visible
+    // memory, removing the CPU→CPU memcpy from the previous version.
+    //
+    // std::array is used for size_arr to avoid a C-style array.  .data() yields
+    // the int* pointer that the mpv C API expects.
+    // -------------------------------------------------------------------------
     const int w = e.video_w;
     const int h = e.video_h;
-    size_t stride = static_cast<size_t>(w) * 4;
-
-    // Ask libmpv to render the current video frame into the CPU buffer
-    int size_arr[2] = {w, h};
-    const char *fmt_rgba = "rgba";
-    mpv_render_param render_params[] = {
-        {MPV_RENDER_PARAM_SW_SIZE, size_arr},
-        {MPV_RENDER_PARAM_SW_FORMAT, const_cast<char *>(fmt_rgba)},
-        {MPV_RENDER_PARAM_SW_STRIDE, &stride},
-        {MPV_RENDER_PARAM_SW_POINTER, e.pixel_buf.data()},
-        {MPV_RENDER_PARAM_INVALID, nullptr},
-    };
-    if (mpv_render_context_render(e.render_ctx, render_params) < 0)
+ 
+    // Row stride in bytes: each pixel is 4 bytes (RGBA).
+    std::size_t stride = static_cast<std::size_t>(w) * 4;
+ 
+    // Dimensions array required by MPV_RENDER_PARAM_SW_SIZE {width, height}.
+    std::array<int, 2> size_arr = {w, h};
+ 
+    // Pixel format string required by MPV_RENDER_PARAM_SW_FORMAT.
+    // constexpr so the string literal is baked in at compile time.
+    static constexpr const char *k_fmt_rgba = "rgba";
+ 
+    // Build the mpv render parameter list as a std::array.
+    // The INVALID entry acts as a sentinel terminator for the mpv C API.
+    std::array<mpv_render_param, 5> render_params = {{
+        {MPV_RENDER_PARAM_SW_SIZE,    size_arr.data()},               // frame dimensions (int*)
+        {MPV_RENDER_PARAM_SW_FORMAT,  const_cast<char *>(k_fmt_rgba)},// pixel format (char*)
+        {MPV_RENDER_PARAM_SW_STRIDE,  &stride},                       // bytes per row (size_t*)
+        {MPV_RENDER_PARAM_SW_POINTER, slot->mapped},                   // destination — staging mem
+        {MPV_RENDER_PARAM_INVALID,    nullptr},                        // list terminator
+    }};
+ 
+    // Ask libmpv to decode and blit the current frame.
+    // A negative return means no new frame was available — bail without a GPU submit.
+    if (mpv_render_context_render(e.render_ctx, render_params.data()) < 0)
         return false;
-
-    // Copy CPU buffer into the persistently-mapped staging buffer
-    std::memcpy(e.staging_mapped, e.pixel_buf.data(), e.pixel_buf.size());
-
-    // Record a one-time command buffer: barrier + copy + barrier
+ 
+    // -------------------------------------------------------------------------
+    // Step 3 — record a one-time command buffer: barrier → copy → barrier.
+    // -------------------------------------------------------------------------
     VkCommandBufferBeginInfo begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(e.cmd_buf, &begin);
-
-    // SHADER_READ → TRANSFER_DST
-    VkImageMemoryBarrier b1 = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-    b1.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    b1.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    b1.image = e.image;
-    b1.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    b1.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    b1.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    vkCmdPipelineBarrier(e.cmd_buf,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &b1);
-
-    VkBufferImageCopy region = {};
-    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.imageExtent = {static_cast<uint32_t>(w), static_cast<uint32_t>(h), 1u};
-    vkCmdCopyBufferToImage(e.cmd_buf, e.staging_buf, e.image,
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;                    // record once, submit once
+    vkBeginCommandBuffer(slot->cmd, &begin);
+ 
+    // Barrier: SHADER_READ_ONLY → TRANSFER_DST so the copy can write to the image.
+    VkImageMemoryBarrier b_to_dst  = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    b_to_dst.oldLayout             = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;   // was being sampled
+    b_to_dst.newLayout             = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;        // will be written
+    b_to_dst.image                 = e.image;
+    b_to_dst.subresourceRange      = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};   // mip 0, layer 0
+    b_to_dst.srcAccessMask         = VK_ACCESS_SHADER_READ_BIT;                  // flush shader reads
+    b_to_dst.dstAccessMask         = VK_ACCESS_TRANSFER_WRITE_BIT;               // before transfer write
+ 
+    vkCmdPipelineBarrier(slot->cmd,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,                   // after fragment reads
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,                           // before the copy
+                         0, 0, nullptr, 0, nullptr,
+                         1, &b_to_dst);
+ 
+    // Copy from the staging buffer to the device-local image.
+    VkBufferImageCopy region        = {};
+    region.imageSubresource         = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};      // mip 0, layer 0
+    region.imageExtent              = {static_cast<uint32_t>(w),
+                                       static_cast<uint32_t>(h), 1u};             // full frame extent
+ 
+    vkCmdCopyBufferToImage(slot->cmd, slot->buf, e.image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-    // TRANSFER_DST → SHADER_READ
-    VkImageMemoryBarrier b2 = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-    b2.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    b2.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    b2.image = e.image;
-    b2.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    b2.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    b2.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(e.cmd_buf,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         0, 0, nullptr, 0, nullptr, 1, &b2);
-
-    vkEndCommandBuffer(e.cmd_buf);
-
-    VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &e.cmd_buf;
-    m_vk->queue_submit(1, &submit, e.upload_fence);
-    e.upload_in_flight = true;
+ 
+    // Barrier: TRANSFER_DST → SHADER_READ_ONLY so the fragment shader can sample the new frame.
+    VkImageMemoryBarrier b_to_read  = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    b_to_read.oldLayout             = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;       // was being written
+    b_to_read.newLayout             = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;   // will be sampled
+    b_to_read.image                 = e.image;
+    b_to_read.subresourceRange      = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    b_to_read.srcAccessMask         = VK_ACCESS_TRANSFER_WRITE_BIT;              // flush the copy
+    b_to_read.dstAccessMask         = VK_ACCESS_SHADER_READ_BIT;                 // before sampling
+ 
+    vkCmdPipelineBarrier(slot->cmd,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,                           // after the copy finishes
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,                    // before the shader reads
+                         0, 0, nullptr, 0, nullptr,
+                         1, &b_to_read);
+ 
+    vkEndCommandBuffer(slot->cmd);
+ 
+    // -------------------------------------------------------------------------
+    // Step 4 — submit and mark the slot in-flight.
+    // -------------------------------------------------------------------------
+    VkSubmitInfo submit          = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submit.commandBufferCount    = 1;
+    submit.pCommandBuffers       = &slot->cmd;
+ 
+    // The per-slot fence is signaled by the GPU when the copy completes.
+    m_vk->queue_submit(1, &submit, slot->fence);
+    slot->in_flight = true;                                                        // GPU is now reading this slot
+ 
+    // Advance the write index to the other slot so the next frame has maximum
+    // GPU time to finish before we come back around to this slot.
+    e.staging_write_idx = (slot_idx + 1) % VideoEntry::k_staging_count;
+ 
     return true;
 }
 
-// ============================================================================
-// Event polling
-// ============================================================================
 
-void VideoPlayer::poll_events(VideoEntry &e) {
+// ============================================================================
+// poll_events
+// ============================================================================
+ 
+/**
+ * @brief Drains the mpv event queue for one video entry and reacts to each event.
+ *
+ * Called every frame from update_frames() on the main thread.  Passes 0.0 as
+ * the timeout so mpv_wait_event() returns immediately if no event is pending.
+ *
+ * Key changes vs the original:
+ *  - On VIDEO_RECONFIG the video frame rate is queried via the "container-fps"
+ *    property and stored in e.container_fps.  e.frame_interval is then computed
+ *    as 90 % of one frame period so the upload gate is slightly faster than the
+ *    nominal rate, preventing throttle drift from accumulating over time.
+ *
+ * @param e  The video entry to poll.
+ */
+void VideoPlayer::poll_events(VideoEntry &e)
+{
     while (true) {
-        mpv_event *ev = mpv_wait_event(e.mpv, 0.0);
+        mpv_event *ev = mpv_wait_event(e.mpv, 0.0);                               // non-blocking poll
         if (!ev || ev->event_id == MPV_EVENT_NONE)
-            break;
-
+            break;                                                                  // queue is empty
+ 
+        // -- End-of-file / load failure ----------------------------------------
         if (ev->event_id == MPV_EVENT_END_FILE) {
             const auto *edata = static_cast<const mpv_event_end_file *>(ev->data);
             if (e.intentional_stop_pending) {
+                // "stop" was issued by our code (e.g. switching active playback).
+                // Suppress the load_failed path.
                 e.intentional_stop_pending = false;
             } else if (edata->reason == MPV_END_FILE_REASON_EOF) {
-                e.finished_at_eof = true; // reset resume position to 00:00 on save
+                // Natural end of file — reset resume position so next open starts at 00:00.
+                e.finished_at_eof = true;
             } else {
-                APP_DEBUG_LOG("[VideoPlayer] load failed id={} reason={}", e.id, static_cast<int>(edata->reason));
+                APP_DEBUG_LOG("[VideoPlayer] load failed id={} reason={}",
+                              e.id, static_cast<int>(edata->reason));
                 e.load_failed = true;
             }
         }
-
-        if (ev->event_id == MPV_EVENT_FILE_LOADED && e.resume_seek_pending && e.resume_position_seconds > 0) {
+ 
+        // -- File loaded (seek restore + state reset) --------------------------
+        if (ev->event_id == MPV_EVENT_FILE_LOADED && e.resume_seek_pending
+            && e.resume_position_seconds > 0) {
+            // Restore the saved playback position after a reload.
             double resume_position = static_cast<double>(e.resume_position_seconds);
             mpv_set_property(e.mpv, "time-pos", MPV_FORMAT_DOUBLE, &resume_position);
             e.resume_seek_pending = false;
-            e.media_unloaded = false;
-            e.load_failed = false;
-            e.finished_at_eof = false;
+            e.media_unloaded      = false;
+            e.load_failed         = false;
+            e.finished_at_eof     = false;
         } else if (ev->event_id == MPV_EVENT_FILE_LOADED) {
-            e.media_unloaded = false;
-            e.load_failed = false;
+            // No resume seek — just clear the error flags.
+            e.media_unloaded  = false;
+            e.load_failed     = false;
             e.finished_at_eof = false;
         }
-
+ 
+        // -- Video reconfiguration (dimensions or stream change) ---------------
         if (ev->event_id == MPV_EVENT_VIDEO_RECONFIG) {
             APP_DEBUG_LOG("[VideoPlayer] event VIDEO_RECONFIG id={}", e.id);
-            // Read the actual decoded video dimensions
+ 
+            // Read the actual decoded frame dimensions.
             int64_t nw = 0, nh = 0;
-            mpv_get_property(e.mpv, "dwidth", MPV_FORMAT_INT64, &nw);
+            mpv_get_property(e.mpv, "dwidth",  MPV_FORMAT_INT64, &nw);
             mpv_get_property(e.mpv, "dheight", MPV_FORMAT_INT64, &nh);
-
+ 
             if (nw > 0 && nh > 0 &&
-                (static_cast<int>(nw) != e.video_w ||
-                 static_cast<int>(nh) != e.video_h)) {
-                vkDeviceWaitIdle(m_vk->device);
+                (static_cast<int>(nw) != e.video_w || static_cast<int>(nh) != e.video_h)) {
+                // Dimensions changed — tear down and rebuild GPU resources.
+                vkDeviceWaitIdle(m_vk->device);                                   // finish in-flight work first
                 destroy_gpu_resources(e);
                 e.video_w = static_cast<int>(nw);
                 e.video_h = static_cast<int>(nh);
                 create_gpu_resources(e);
-                e.frame_dirty.store(true, std::memory_order_release);
-                APP_DEBUG_LOG("[VideoPlayer] reconfigured id={} {}x{}", e.id, e.video_w, e.video_h);
+                e.frame_dirty.store(true, std::memory_order_release);             // request immediate upload
+                APP_DEBUG_LOG("[VideoPlayer] reconfigured id={} {}x{}",
+                              e.id, e.video_w, e.video_h);
             }
+ 
+            // -----------------------------------------------------------------
+            // Update the per-entry upload throttle from the container frame rate.
+            //
+            // "container-fps" is the declared rate in the file header; it is
+            // available immediately after VIDEO_RECONFIG without waiting for frames.
+            // A fallback of 30 fps is used for audio-only streams or containers
+            // that omit the field.
+            //
+            // The interval is set to 90 % of one frame period rather than exactly
+            // 1/fps.  The 10 % headroom ensures the upload gate does not edge-slip
+            // past the next frame's arrival time when the OS timer granularity is
+            // coarser than the frame period (common on Windows with the default
+            // 15 ms timer resolution).
+            // -----------------------------------------------------------------
+            double fps = 0.0;
+            if (mpv_get_property(e.mpv, "container-fps", MPV_FORMAT_DOUBLE, &fps) < 0
+                || fps <= 1.0) {
+                fps = 30.0;                                                        // safe fallback
+            }
+            e.container_fps = fps;                                                 // store for UI display
+ 
+            // 90 % of one frame period, cast to the steady_clock's native duration.
+            const double interval_s = (1.0 / fps) * 0.9;
+            e.frame_interval = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>(interval_s));
+ 
+            APP_DEBUG_LOG("[VideoPlayer] fps={:.2f} frame_interval={}ms",
+                          fps,
+                          std::chrono::duration_cast<std::chrono::milliseconds>(
+                              e.frame_interval).count());
         }
     }
 }
 
-// ============================================================================
-// update_frames — call once per frame
-// ============================================================================
 
-void VideoPlayer::update_frames() {
+// ============================================================================
+// update_frames
+// ============================================================================
+ 
+/**
+ * @brief Uploads new video frames to the GPU for every open entry.
+ *
+ * Must be called exactly once per application frame on the main thread, before
+ * draw().  Polls each entry's mpv event queue, and when the render-update
+ * callback has flagged a new frame, attempts an upload respecting the
+ * per-entry frame_interval throttle.
+ *
+ * Key change: the throttle interval now comes from e.frame_interval (derived
+ * from the video's container frame rate in poll_events) instead of the global
+ * 50 ms constant that hard-capped all content at 20 fps regardless of source.
+ *
+ * @note Asserts that it is called from the thread recorded in m_main_thread_id.
+ */
+void VideoPlayer::update_frames()
+{
     if (!m_initialized)
         return;
+ 
+    // Thread safety: this function writes to Vulkan resources and to VideoEntry
+    // fields.  It must always run on the same thread as draw().
     assert(std::this_thread::get_id() == m_main_thread_id &&
            "VideoPlayer::update_frames() must be called from the main thread");
-
+ 
     if (m_hover_initialized)
-        m_hover->tick_idle();
-
-    constexpr auto k_min_upload_interval = std::chrono::milliseconds(50);
-
+        m_hover->tick_idle();                                                      // keep hover preview alive
+ 
     for (auto &ep : m_entries) {
         VideoEntry &e = *ep;
         if (!e.mpv)
-            continue;
-
-        poll_events(e);
-
-        // If the media was intentionally unloaded, keep the last uploaded
-        // texture as a frozen thumbnail and ignore further render callbacks
-        // (which may produce black frames after "stop").
+            continue;                                                               // entry being torn down
+ 
+        poll_events(e);                                                            // drain mpv event queue
+ 
         if (e.media_unloaded) {
+            // Media was explicitly stopped (e.g. single-active enforcement).
+            // Clear the dirty flag so we do not upload a spurious black frame
+            // that mpv may emit after "stop".
             e.frame_dirty.store(false, std::memory_order_release);
         } else if (e.frame_dirty.exchange(false, std::memory_order_acq_rel) &&
                    e.descriptor_set != VK_NULL_HANDLE) {
-            // If the render-update callback fired, render and upload a new frame.
-            // Cap upload cadence so video decode work does not dominate UI pacing.
+            // The mpv render callback fired — a new decoded frame is available.
             const auto now = std::chrono::steady_clock::now();
-            if ((now - e.last_upload_time) >= k_min_upload_interval) {
-                if (upload_frame(e))
-                    e.last_upload_time = now;
-                else
+ 
+            // Throttle uploads to the video's native frame rate (stored in
+            // e.frame_interval, computed from container-fps in poll_events).
+            // This replaces the former hard-coded 50 ms / 20 fps ceiling.
+            if ((now - e.last_upload_time) >= e.frame_interval) {
+                if (upload_frame(e)) {
+                    e.last_upload_time = now;                                      // record successful upload time
+                } else {
+                    // No staging slot was free or mpv had nothing to render.
+                    // Preserve the dirty flag so we retry on the very next tick.
                     e.frame_dirty.store(true, std::memory_order_release);
+                }
             } else {
+                // Not enough time has elapsed since the last upload.
+                // Preserve the dirty flag — do not silently discard the frame.
                 e.frame_dirty.store(true, std::memory_order_release);
             }
         }
-
-        // Upload preview thumbnail if the jthread has a new frame ready
+ 
+        // Flush any seek-preview thumbnail the background jthread produced.
         e.seek_preview.update();
     }
-
-    enforce_single_active_playback();
+ 
+    enforce_single_active_playback();                                              // ensure at most one entry plays
 }
+ 
+
 
 // ============================================================================
 // draw — called each frame inside an ImGui frame
@@ -927,9 +1165,6 @@ void VideoPlayer::set_downloader(VideoDownloader *d)
 
 void VideoPlayer::restart_hover_preview()
 {
-    if (!ensure_hover_setup())
-        return;
-
     APP_DEBUG_LOG("[VideoPlayer] restart_hover_preview");
     m_hover->stop_thread();
     m_hover->start_thread();
@@ -937,22 +1172,16 @@ void VideoPlayer::restart_hover_preview()
 
 bool VideoPlayer::consume_hover_popup_reopen_request()
 {
-    if (!m_hover_initialized)
-        return false;
     return m_hover->consume_popup_reopen_request();
 }
 
 bool VideoPlayer::is_hover_dwell_pending(const std::string &source) const
 {
-    if (!m_hover_initialized)
-        return true;
     return m_hover->is_hover_dwell_pending(source);
 }
 
 void VideoPlayer::notify_hover(const std::string &source)
 {
-    if (!ensure_hover_setup())
-        return;
     m_hover->notify_hover(source);
 }
 
@@ -1132,10 +1361,10 @@ void VideoPlayer::replace_source_with_saved_file(const std::string &source,
 }
 
 void VideoPlayer::draw() {
-    if (!m_initialized)
-        return;
     assert(std::this_thread::get_id() == m_main_thread_id &&
            "VideoPlayer::draw() must be called from the main thread");
+    if (!m_vk)
+        return;
 
     struct ReloadRequest {
         std::string source;
@@ -1407,7 +1636,7 @@ void VideoPlayer::enforce_single_active_playback() {
     }
 }
 
-void VideoPlayer::draw_window(VideoEntry &e, int idx) {
+bool VideoPlayer::draw_window(VideoEntry &e, int idx) {
     std::string display_title = e.title;
     uint64_t downloaded_bytes = 0;
     if (m_downloader) {
@@ -1465,31 +1694,32 @@ void VideoPlayer::draw_window(VideoEntry &e, int idx) {
         m_on_fix_videos,
         m_is_startup_videos_fixed,
         [this, &e, idx](int direction) {
-            const int target = idx + direction;
-            const std::string &source = m_entries[target]->source;
-            const std::string &playback_source = m_entries[target]->playback_source;
-            const char *command[] = {"loadfile", playback_source.c_str(), "replace", nullptr};
-            mpv_command_async(e.mpv, 0, command);
-            e.source = source;
-            e.playback_source = playback_source;
-            e.title = m_entries[target]->title;
-            e.kind = m_entries[target]->kind;
+          const int target = idx + direction;
+          const std::string &source = m_entries[target]->source;
+          const std::string &playback_source =
+              m_entries[target]->playback_source;
+          const char *command[] = {"loadfile", playback_source.c_str(),
+                                   "replace", nullptr};
+          mpv_command_async(e.mpv, 0, command);
+          e.source = source;
+          e.playback_source = playback_source;
+          e.title = m_entries[target]->title;
+          e.kind = m_entries[target]->kind;
         },
         [this](int video_id, bool playing) {
-            set_playback_state(video_id, playing);
+          set_playback_state(video_id, playing);
         },
-        [this](int hovered_video_id) {
-            for (auto &entry : m_entries) {
-                if (!entry->open || entry->id == hovered_video_id)
-                    continue;
-                entry->seek_preview.stop_thread();
-            }
+        nullptr, // on_seek_preview_hover — no-op
+        [this]() -> bool {
+          return m_on_get_app_fullscreen();
         },
-        m_on_get_app_fullscreen,
-        m_on_set_app_fullscreen,
+        [this](bool fullscreen) {
+          m_on_set_app_fullscreen(fullscreen);
+        },
     };
 
     m_ui_window->draw(state, callbacks);
+    return e.open;
 }
 
 // ============================================================================

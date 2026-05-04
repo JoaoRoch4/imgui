@@ -92,3 +92,7 @@ Project_sdl3_vulkan/.cmake/
 *.vcxproj
 *.filters
 *.ttf
+Project_sdl3_vulkan/external/ColorTextEditorDemo
+Project_sdl3_vulkan/external/ImGuiColorTextEdit
+Project_sdl3_vulkan/external/ColorTextEditorDemo
+Project_sdl3_vulkan/external/implot

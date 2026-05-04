@@ -200,7 +200,7 @@ private:
     bool create_gpu_resources(VideoEntry &e);
     void destroy_gpu_resources(VideoEntry &e);
     bool upload_frame(VideoEntry &e);
-    void draw_window(VideoEntry &e, int idx);
+    bool draw_window(VideoEntry &e, int idx);
     void poll_events(VideoEntry &e);
     void set_playback_state(int video_id, bool playing);
     void enforce_single_active_playback();

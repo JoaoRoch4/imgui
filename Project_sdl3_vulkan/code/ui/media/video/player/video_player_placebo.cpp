@@ -181,7 +181,7 @@ bool VideoPlayerPlacebo::create_placeholder_texture() {
     std::vector<uint8_t> pixels(static_cast<size_t>(bytes));
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
-            const size_t idx = static_cast<size_t>((y * w + x) * 4);
+            const size_t idx = (static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)) * 4u;
             const bool checker = (((x / 16) + (y / 16)) & 1) != 0;
             const uint8_t r = static_cast<uint8_t>(checker ? 64 : 28);
             const uint8_t g = static_cast<uint8_t>(checker ? 86 : 36);

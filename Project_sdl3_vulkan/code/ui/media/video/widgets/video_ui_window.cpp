@@ -18,6 +18,111 @@
 
 namespace {
 
+    /**
+ * @brief Reads the CPU model name from /proc/cpuinfo (first "model name" entry).
+ *
+ * Cached by the caller via a function-local static; this function is called
+ * at most once per process.  Returns "Unknown CPU" if the file is absent or
+ * the key is missing.
+ *
+ * @return Trimmed string, e.g. "Intel(R) Core(TM) i7-7700 CPU @ 3.60GHz".
+ */
+[[nodiscard]] static std::string read_cpu_name_linux()
+{
+    // /proc/cpuinfo is a virtual kernel file; open cost is negligible.
+    std::ifstream f("/proc/cpuinfo");
+    if (!f.is_open())
+        return "Unknown CPU";                                                      // kernel file absent
+
+    std::string line;
+    while (std::getline(f, line)) {
+        if (!line.starts_with("model name"))
+            continue;                                                               // skip unrelated keys
+
+        const std::size_t colon = line.find(':');                                  // separator position
+        if (colon == std::string::npos)
+            continue;                                                               // malformed line
+
+        // Advance past ": " to reach the bare model string.
+        std::string name = line.substr(colon + 2);
+
+        // Strip trailing whitespace / carriage-return (CRLF files on some kernels).
+        while (!name.empty() && (name.back() == ' ' || name.back() == '\r'))
+            name.pop_back();
+
+        return name;                                                               // first core entry is enough
+    }
+    return "Unknown CPU";                                                          // key not found in file
+}
+
+/**
+ * @brief Reads the GPU model name from the NVIDIA sysfs tree or DRM fallback.
+ *
+ * Primary path: /proc/driver/nvidia/gpus/<PCI>/information — "Model:" line.
+ * Fallback:     /sys/class/drm/cardN/device/product_name   — first non-empty.
+ *
+ * Cached by the caller; called at most once per process lifetime.
+ *
+ * @return String such as "NVIDIA GeForce RTX 3060", or "Unknown GPU".
+ */
+[[nodiscard]] static std::string read_gpu_name_linux()
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+
+    // -- NVIDIA proprietary driver: /proc/driver/nvidia/gpus/<PCI>/information --
+    const fs::path nvidia_base("/proc/driver/nvidia/gpus");
+    if (fs::exists(nvidia_base, ec)) {
+        for (const auto &gpu_dir : fs::directory_iterator(nvidia_base, ec)) {
+            std::ifstream f(gpu_dir.path() / "information");
+            if (!f.is_open())
+                continue;                                                           // PCI dir without info file
+
+            std::string line;
+            while (std::getline(f, line)) {
+                if (!line.starts_with("Model:"))
+                    continue;
+
+                const std::size_t colon = line.find(':');
+                if (colon == std::string::npos)
+                    continue;
+
+                std::string name = line.substr(colon + 2);
+                while (!name.empty() && (name.back() == ' ' || name.back() == '\r'))
+                    name.pop_back();
+
+                return name;                                                       // e.g. "NVIDIA GeForce RTX 3060"
+            }
+        }
+    }
+
+    // -- DRM fallback: works for Mesa / AMD / Intel open-source drivers ---------
+    for (int card_idx = 0; card_idx < 4; ++card_idx) {
+        // Probe up to card3; most desktops have at most two GPU nodes.
+        const fs::path product_file =
+            fs::path("/sys/class/drm") /
+            ("card" + std::to_string(card_idx)) /
+            "device" / "product_name";
+
+        std::ifstream f(product_file);
+        if (!f.is_open())
+            continue;                                                               // card node absent
+
+        std::string name;
+        std::getline(f, name);                                                     // single-line file
+
+        while (!name.empty() && (name.back() == ' '  ||
+                                  name.back() == '\n' ||
+                                  name.back() == '\r'))
+            name.pop_back();
+
+        if (!name.empty())
+            return name;                                                           // first non-empty entry wins
+    }
+
+    return "Unknown GPU";                                                          // neither path produced a result
+}
+
 std::string format_time(double time_seconds)
 {
     const int total_seconds = static_cast<int>(time_seconds);
@@ -290,17 +395,26 @@ void draw_stats_overlay(mpv_handle *mpv, ImVec2 image_pos, ImVec2 display_size)
 
         const int64_t total_bitrate = video_bitrate + audio_bitrate;
 
+        // Lazy-initialised hardware strings — OS file I/O runs exactly once.
+        // function-local statics are initialised on first call and then reused,
+        // so the /proc and /sys reads never happen on subsequent 500 ms ticks.
+        static const std::string s_cpu_name = read_cpu_name_linux();              // e.g. "Intel(R) Core(TM) i7-7700 @ 3.60GHz"
+        static const std::string s_gpu_name = read_gpu_name_linux();              // e.g. "NVIDIA GeForce RTX 3060"
+
         cache.lines = {
-            std::move(res_str),
-            std::move(fps_str),
-            "Duration: " + format_duration(duration),
-            "Size:     " + (file_size > 0.0 ? format_size(file_size) : std::string("?")),
-            "Total BR: " + format_bps(total_bitrate),
-            "Video:    " + format_bps(video_bitrate),
-            "Audio:    " + format_bps(audio_bitrate),
-            "Dropped:  " + std::to_string(frame_drop),
-            "Mistimed: " + std::to_string(mistimed),
-            std::move(decoder_str),
+            std::move(res_str),                                                    // [0] Resolution: 1920x1080
+            std::move(fps_str),                                                    // [1] FPS:        60.00
+            "Duration: " + format_duration(duration),                             // [2] Duration: 5:45
+            "Size:     " + (file_size > 0.0 ? format_size(file_size)              //
+                                             : std::string("?")),                 // [3] Size:     165.6 MiB
+            "Total BR: " + format_bps(total_bitrate),                             // [4] Total BR: 4.1 Mbps
+            "Video:    " + format_bps(video_bitrate),                             // [5] Video:    3.7 Mbps
+            "Audio:    " + format_bps(audio_bitrate),                             // [6] Audio:    334 Kbps
+            "Dropped:  " + std::to_string(frame_drop),                            // [7] Dropped:  6
+            "Mistimed: " + std::to_string(mistimed),                              // [8] Mistimed: 0
+            std::move(decoder_str),                                                // [9] Decoder:  H.264 / AVC (nvdec)
+            "CPU:      " + s_cpu_name,                                            // [10] CPU: Intel(R) Core(TM) i7-7700 @ 3.60GHz
+            "GPU:      " + s_gpu_name,                                            // [11] GPU: NVIDIA GeForce RTX 3060
         };
 
         // Recompute box dimensions only when content changes (every 500 ms),

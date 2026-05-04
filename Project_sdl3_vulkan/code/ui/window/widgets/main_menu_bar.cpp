@@ -6,13 +6,14 @@
 
 #include "pch.hpp"
 
-#include "main_menu_bar.hpp"
 #include "Image_viewer_panel.hpp"
 #include "app_state_coordinator.hpp"
 #include "bulk_image_open_queue.hpp"
 #include "config_runtime.hpp"
+#include "file_browser_context_menu.hpp"
 #include "history_context_menu.hpp"
 #include "history_preview.hpp"
+#include "main_menu_bar.hpp"
 #include "media_history_manager.hpp"
 #include "media_load_handler.hpp"
 #include "open_image_dialogs.hpp"
@@ -20,7 +21,6 @@
 #include "recent_history_menu.hpp"
 #include "style_editor.hpp"
 #include "video_context_menu.hpp"
-#include "file_browser_context_menu.hpp"
 #include "video_downloader.hpp"
 #include "video_playback_mode.hpp"
 #include "video_player.hpp"
@@ -38,9 +38,9 @@
 
 namespace {
 ImGui::FileBrowser &GetMainFileExplorer() {
-  static ImGui::FileBrowser browser(
-      ImGuiFileBrowserFlags_Window | ImGuiFileBrowserFlags_EditPathString |
-      ImGuiFileBrowserFlags_CreateNewDir);
+  static ImGui::FileBrowser browser(ImGuiFileBrowserFlags_Window |
+                                    ImGuiFileBrowserFlags_EditPathString |
+                                    ImGuiFileBrowserFlags_CreateNewDir);
   static bool configured = false;
   if (!configured) {
     browser.SetTitle("File Explorer");
@@ -62,8 +62,9 @@ bool IsHoverPreviewMediaPath(const std::filesystem::path &path) {
 
   const std::string ext = [&]() {
     std::string s = path.extension().string();
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
     return s;
   }();
 
@@ -78,8 +79,9 @@ bool UseVideoPlayerPlacebo() {
     return false;
 
   std::string value(env);
-  std::transform(value.begin(), value.end(), value.begin(),
-                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  std::transform(
+      value.begin(), value.end(), value.begin(),
+      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
   return value == "1" || value == "true" || value == "on" || value == "yes";
 }
 } // namespace
@@ -155,7 +157,8 @@ void MainMenuBar::Setup(StyleEditor *style_editor, SDL_Window *window,
         m_history_mgr->replace_with_saved_file(source, saved_path,
                                                *m_opened_files_window);
         if (m_use_video_player_placebo)
-          m_video_player_placebo->replace_source_with_saved_file(source, saved_path);
+          m_video_player_placebo->replace_source_with_saved_file(source,
+                                                                 saved_path);
         else
           m_video_player->replace_source_with_saved_file(source, saved_path);
       });
@@ -166,9 +169,10 @@ void MainMenuBar::Setup(StyleEditor *style_editor, SDL_Window *window,
                    : m_video_player->can_toggle_hwdec(source);
       },
       [this](const std::string &source) {
-        const bool hwdec = m_use_video_player_placebo
-                               ? m_video_player_placebo->is_hwdec_enabled(source)
-                               : m_video_player->is_hwdec_enabled(source);
+        const bool hwdec =
+            m_use_video_player_placebo
+                ? m_video_player_placebo->is_hwdec_enabled(source)
+                : m_video_player->is_hwdec_enabled(source);
         if (m_use_video_player_placebo)
           return static_cast<int>(VideoPlaybackMode::NvdecLibplacebo);
         return hwdec ? static_cast<int>(VideoPlaybackMode::NvdecMpv)
@@ -179,17 +183,18 @@ void MainMenuBar::Setup(StyleEditor *style_editor, SDL_Window *window,
         const bool next_hwdec = mode_uses_hwdec(next_mode);
         const bool next_placebo = mode_uses_libplacebo(next_mode);
 
-        const int resume_pos = m_use_video_player_placebo
-                                   ? m_video_player_placebo->persisted_position_seconds(source)
-                                   : m_video_player->persisted_position_seconds(source);
-        m_history_mgr->set_playback_mode(source,
-                                         next_mode,
-                                         *m_opened_files_window,
-                                         resume_pos);
+        const int resume_pos =
+            m_use_video_player_placebo
+                ? m_video_player_placebo->persisted_position_seconds(source)
+                : m_video_player->persisted_position_seconds(source);
+        m_history_mgr->set_playback_mode(source, next_mode,
+                                         *m_opened_files_window, resume_pos);
 
         m_use_video_player_placebo = next_placebo;
-        m_load_handler->set_use_video_player_placebo(m_use_video_player_placebo);
-        m_history_preview->set_use_video_player_placebo(m_use_video_player_placebo);
+        m_load_handler->set_use_video_player_placebo(
+            m_use_video_player_placebo);
+        m_history_preview->set_use_video_player_placebo(
+            m_use_video_player_placebo);
 
         m_video_player->set_all_hwdec(next_hwdec);
         m_video_player_placebo->set_all_hwdec(next_hwdec);
@@ -198,26 +203,29 @@ void MainMenuBar::Setup(StyleEditor *style_editor, SDL_Window *window,
       [this]() { return m_config_runtime->VsyncEnabled(); },
       [this](bool enabled) { m_config_runtime->SetVsyncEnabled(enabled); });
   m_history_preview->setup(m_vk, m_video_player.get(), m_viewer.get(),
-                           m_video_player_placebo.get(), m_use_video_player_placebo);
+                           m_video_player_placebo.get(),
+                           m_use_video_player_placebo);
 
   // Wire the file explorer hover callback to the preview system.
-  GetMainFileExplorer().SetHoverFileCallback([this](const std::filesystem::path &path) {
-    if (!IsHoverPreviewMediaPath(path))
-      return;
+  GetMainFileExplorer().SetHoverFileCallback(
+      [this](const std::filesystem::path &path) {
+        if (!IsHoverPreviewMediaPath(path))
+          return;
 
-    WindowStateToml::ImageHistoryEntry tmp;
-    tmp.source = path.string();
-    tmp.title  = path.filename().string();
-    tmp.kind   = "file";
-    m_history_preview->draw_for_hover(tmp);
-  });
+        WindowStateToml::ImageHistoryEntry tmp;
+        tmp.source = path.string();
+        tmp.title = path.filename().string();
+        tmp.kind = "file";
+        m_history_preview->draw_for_hover(tmp);
+      });
 
   m_fb_context_menu->setup(m_window);
-  GetMainFileExplorer().SetContextMenuCallback([this](const std::filesystem::path &path) {
-    auto res = m_fb_context_menu->draw(path);
-    if (res.open)
-      m_open_image_dialogs->queue_path(res.open_path.string());
-  });
+  GetMainFileExplorer().SetContextMenuCallback(
+      [this](const std::filesystem::path &path) {
+        auto res = m_fb_context_menu->draw(path);
+        if (res.open)
+          m_open_image_dialogs->queue_path(res.open_path.string());
+      });
 
   m_app_state->setup(m_history_mgr.get(), m_config_runtime.get(),
                      m_history_preview.get(), m_opened_files_window.get(),
@@ -272,7 +280,8 @@ void MainMenuBar::Setup(StyleEditor *style_editor, SDL_Window *window,
     request_reopen = true;
     request_quit = true;
   });
-  m_config_runtime->SetVideoPlaybackChangedCallback([this](int mode, bool loop) {
+  m_config_runtime->SetVideoPlaybackChangedCallback([this](int mode,
+                                                           bool loop) {
     const int next_mode = sanitize_video_playback_mode(mode);
     const bool next_hwdec = mode_uses_hwdec(next_mode);
     const bool next_placebo = mode_uses_libplacebo(next_mode);
@@ -304,13 +313,12 @@ void MainMenuBar::Setup(StyleEditor *style_editor, SDL_Window *window,
       [this](const std::string &source) {
         m_history_mgr->erase(source, *m_opened_files_window);
       });
-  m_opened_files_window->SetRestartPreviewCallback(
-      [this]() {
-        if (m_use_video_player_placebo)
-          m_video_player_placebo->restart_hover_preview();
-        else
-          m_video_player->restart_hover_preview();
-      });
+  m_opened_files_window->SetRestartPreviewCallback([this]() {
+    if (m_use_video_player_placebo)
+      m_video_player_placebo->restart_hover_preview();
+    else
+      m_video_player->restart_hover_preview();
+  });
   m_opened_files_window->SetRescanTomlCallback([this]() {
     if (!m_app_state->state_path().empty())
       LoadOpenedFilesHistoryFromToml(m_app_state->state_path());
@@ -338,26 +346,31 @@ void MainMenuBar::Setup(StyleEditor *style_editor, SDL_Window *window,
 
   m_opened_files_window->SetQuitCallback([this]() { request_quit = true; });
 
-  m_load_handler->setup(m_viewer.get(), m_video_player.get(),
-                        m_video_player_placebo.get(),
-                        m_bulk_image_open.get(), m_history_mgr.get(),
-                        m_video_downloader.get(), m_opened_files_window.get(),
-                        m_vk, m_use_video_player_placebo);
+  m_load_handler->setup(
+      m_viewer.get(), m_video_player.get(), m_video_player_placebo.get(),
+      m_bulk_image_open.get(), m_history_mgr.get(), m_video_downloader.get(),
+      m_opened_files_window.get(), m_vk, m_use_video_player_placebo);
 
   // ---- Console -------------------------------------------------------
   m_console = std::make_unique<ConsoleCommands>();
-  m_console->OnQuit = [this]() {
-    request_quit = true;
-  };
+  m_console->OnQuit = [this]() { request_quit = true; };
   m_console->OnDemoToggle = [this](bool on) {
-    if (m_show_demo_window) *m_show_demo_window = on;
+    if (m_show_demo_window)
+      *m_show_demo_window = on;
   };
   m_console->OnStyleChange = [](int which) {
     switch (which) {
-      case 0: ImGui::StyleColorsDark();    break;
-      case 1: ImGui::StyleColorsLight();   break;
-      case 2: ImGui::StyleColorsClassic(); break;
-      default: break;
+    case 0:
+      ImGui::StyleColorsDark();
+      break;
+    case 1:
+      ImGui::StyleColorsLight();
+      break;
+    case 2:
+      ImGui::StyleColorsClassic();
+      break;
+    default:
+      break;
     }
   };
   m_emoji_atlas = std::make_unique<VulkanEmojiAtlas>(*m_vk);
@@ -460,7 +473,8 @@ void MainMenuBar::Build() {
   // Step 2 — finalise deferred video save
   m_video_context_menu->process_pending_save();
 
-  // Step 2b — file browser context menu deferred ops (delete confirmation modal)
+  // Step 2b — file browser context menu deferred ops (delete confirmation
+  // modal)
   m_fb_context_menu->process_pending();
 
   // Step 3 — one-shot startup video restoration
@@ -480,7 +494,8 @@ void MainMenuBar::Build() {
     }
     m_history_mgr->persist();
     if (m_use_video_player_placebo)
-      m_video_player_placebo->notify_download_complete(result.url, result.cached_path);
+      m_video_player_placebo->notify_download_complete(result.url,
+                                                       result.cached_path);
     else
       m_video_player->notify_download_complete(result.url, result.cached_path);
   }
@@ -523,11 +538,11 @@ void MainMenuBar::Build() {
                   [this](WindowStateToml::ImageHistoryEntry &entry) {
                     const bool is_video =
                         (m_use_video_player_placebo
-                          ? VideoPlayerPlacebo::is_video_path(entry.source)
-                          : VideoPlayer::is_video_path(entry.source)) ||
+                             ? VideoPlayerPlacebo::is_video_path(entry.source)
+                             : VideoPlayer::is_video_path(entry.source)) ||
                         (m_use_video_player_placebo
-                          ? VideoPlayerPlacebo::is_video_url(entry.source)
-                          : VideoPlayer::is_video_url(entry.source));
+                             ? VideoPlayerPlacebo::is_video_url(entry.source)
+                             : VideoPlayer::is_video_url(entry.source));
 
                     if (is_video) {
                       if (const auto r =

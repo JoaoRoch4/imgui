@@ -155,11 +155,13 @@ void VideoSeekPreview::init_mpv(const std::string &source) {
     return;
 
   mpv_set_option_string(m_mpv, "vo", "libmpv");
+  mpv_set_option_string(m_mpv, "mute", "no");
   mpv_set_option_string(m_mpv, "pause", "yes");
   mpv_set_option_string(m_mpv, "hr-seek", "yes");
   mpv_set_option_string(m_mpv, "hwdec", "nvdec");
   mpv_set_option_string(m_mpv, "hwdec-codecs", "h264,hevc,av1,vp9,mpeg4,vc1");
-
+    // yt-dlp integration — lets mpv stream YouTube, Vimeo, Twitch, etc.
+   
   if (mpv_initialize(m_mpv) < 0) {
     mpv_terminate_destroy(m_mpv);
     m_mpv = nullptr;

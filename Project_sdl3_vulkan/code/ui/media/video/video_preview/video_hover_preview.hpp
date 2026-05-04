@@ -6,26 +6,26 @@ class vulkan_context;
 
 class VideoHoverPreview {
 public:
-    static inline ImVec2 preview_size = {320, 180};
-    static constexpr size_t max_cache_size = 32;
+    static inline ImVec2 preview_size = {1920, 1080};
+    static constexpr size_t max_cache_size = 128;
 
     /// Runtime-mutable: enable/disable the hover preview popup entirely.
     static inline bool enabled = true;
 
     /// Runtime-mutable: dwell time before the popup appears and mpv starts loading.
-    static inline std::chrono::milliseconds hover_delay{800};
+    static inline std::chrono::milliseconds hover_delay{300};
 
     /// Kill the worker thread when no hover requests arrive for this interval.
-    static constexpr std::chrono::milliseconds idle_thread_timeout{1500};
+    static constexpr std::chrono::milliseconds idle_thread_timeout{100};
 
     /// If preview loading stays stuck longer than this, restart hover thread.
-    static constexpr std::chrono::milliseconds loading_restart_timeout{800};
+    static constexpr std::chrono::milliseconds loading_restart_timeout{100};
 
     /// Prevent rapid restart loops when a source is persistently broken.
-    static constexpr std::chrono::milliseconds loading_restart_cooldown{1200};
+    static constexpr std::chrono::milliseconds loading_restart_cooldown{200};
 
     /// If a hovered/playing source has no decoded frame for too long, force recovery.
-    static constexpr std::chrono::milliseconds no_frame_restart_timeout{800};
+    static constexpr std::chrono::milliseconds no_frame_restart_timeout{100};
 
     VideoHoverPreview();
     ~VideoHoverPreview();

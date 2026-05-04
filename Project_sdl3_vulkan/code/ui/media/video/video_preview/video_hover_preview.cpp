@@ -122,6 +122,19 @@ void VideoHoverPreview::init_mpv() {
     mpv_set_option_string(m_mpv, "loop-file", "inf");
     mpv_set_option_string(m_mpv, "hwdec", "nvdec");
     mpv_set_option_string(m_mpv, "hwdec-codecs", "h264,hevc,av1,vp9,mpeg4,vc1");
+     mpv_set_option_string(m_mpv, "ytdl", "yes");
+    mpv_set_option_string(m_mpv, "ytdl-format",
+                          "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best");
+    // Network buffering
+    mpv_set_option_string(m_mpv, "cache", "yes");
+    mpv_set_option_string(m_mpv, "demuxer-max-bytes", "150MiB");
+    mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "50MiB");
+    mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "30");
+    mpv_set_option_string(m_mpv, "stream-buffer-size", "4MiB");
+
+    //scale
+mpv_set_option_string(m_mpv, "scale", "spline36");
+         mpv_set_option_string(m_mpv, "dscale",       "ewa_lanczos");
 
     mpv_initialize(m_mpv);
 

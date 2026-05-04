@@ -569,8 +569,17 @@ void HistoryPreview::draw_for_hover(WindowStateToml::ImageHistoryEntry &hentry)
                 : m_video_player->hover_thumbnail(lookup_src);
 
         if (ds != VK_NULL_HANDLE) {
-            // Live frame available — render it.
-            ImGui::Image(std::bit_cast<ImTextureID>(ds), VideoHoverPreview::preview_size);
+            // Live frame available — render it, correcting for aspect ratio.
+            // mpv SW renderer fills the entire preview_size buffer by stretching;
+            // compute the display size from the source's native dimensions so the
+            // content appears with correct proportions.
+            const ImVec2 src_dims = VideoHoverPreview::last_source_size;
+            ImVec2 draw_size = VideoHoverPreview::preview_size;
+            if (src_dims.x > 0.0f && src_dims.y > 0.0f) {
+                const float scale = std::min(draw_size.x / src_dims.x, draw_size.y / src_dims.y);
+                draw_size = ImVec2(src_dims.x * scale, src_dims.y * scale);
+            }
+            ImGui::Image(std::bit_cast<ImTextureID>(ds), draw_size);
 
             // Opportunistically save this frame as a static thumbnail PNG so
             // that subsequent hovers can show something while the live preview loads.

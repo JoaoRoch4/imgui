@@ -78,6 +78,7 @@ private:
     std::function<void(int)> m_on_video_resume_threshold_changed;
     bool m_pending_hover_preview_enabled;
     int  m_pending_hover_preview_delay_ms;
+    bool m_pending_hover_preview_sound;
     std::function<void(bool, int)> m_on_hover_preview_changed;
     int m_pending_global_playback_mode;
     bool m_pending_global_loop_enabled;

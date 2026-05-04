@@ -66,6 +66,7 @@ ConfigRuntime::ConfigRuntime()
       m_pending_hover_preview_enabled{VideoHoverPreview::enabled},
       m_pending_hover_preview_delay_ms{
           static_cast<int>(VideoHoverPreview::hover_delay.count())},
+      m_pending_hover_preview_sound{VideoHoverPreview::preview_sound},
       m_on_hover_preview_changed{nullptr},
       m_pending_global_playback_mode{
           static_cast<int>(VideoPlaybackMode::SwMpv)},
@@ -166,9 +167,11 @@ void ConfigRuntime::ApplyLayout(const WindowStateToml &state) {
   m_pending_hover_preview_enabled = state.hover_preview_enabled;
   m_pending_hover_preview_delay_ms =
       std::clamp(state.hover_preview_delay_ms, 0, 5000);
+  m_pending_hover_preview_sound = state.hover_preview_sound;
   VideoHoverPreview::enabled = m_pending_hover_preview_enabled;
   VideoHoverPreview::hover_delay =
       std::chrono::milliseconds(m_pending_hover_preview_delay_ms);
+  VideoHoverPreview::preview_sound = m_pending_hover_preview_sound;
   if (m_on_hover_preview_changed)
     m_on_hover_preview_changed(VideoHoverPreview::enabled,
                                m_pending_hover_preview_delay_ms);
@@ -203,6 +206,7 @@ void ConfigRuntime::ExportLayout(WindowStateToml *state) const {
   state->hover_preview_enabled = VideoHoverPreview::enabled;
   state->hover_preview_delay_ms =
       static_cast<int>(VideoHoverPreview::hover_delay.count());
+  state->hover_preview_sound = VideoHoverPreview::preview_sound;
   state->global_video_playback_mode = m_pending_global_playback_mode;
   state->global_hwdec_enabled = mode_uses_hwdec(m_pending_global_playback_mode);
   state->global_loop_enabled = m_pending_global_loop_enabled;
@@ -235,6 +239,21 @@ void ConfigRuntime::Draw() {
     if (DrawPreviewSizeControl("Hover Preview Size", "##hover_preview_size",
                                m_pending_hover_size))
       VideoHoverPreview::preview_size = m_pending_hover_size;
+    {
+      const ImVec2 src = VideoHoverPreview::last_source_size;
+      const bool has_src = src.x > 0.0f && src.y > 0.0f;
+      ImGui::SameLine();
+      ImGui::BeginDisabled(!has_src);
+      if (ImGui::SmallButton("Source size##hover_src_size")) {
+        m_pending_hover_size = src;
+        VideoHoverPreview::preview_size = src;
+      }
+      ImGui::EndDisabled();
+      if (has_src) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%.0fx%.0f", src.x, src.y);
+      }
+    }
 
     if (DrawPreviewSizeControl("Seek Preview Size", "##seek_preview_size",
                                m_pending_seek_size))
@@ -266,6 +285,12 @@ void ConfigRuntime::Draw() {
         m_on_hover_preview_changed(VideoHoverPreview::enabled,
                                    m_pending_hover_preview_delay_ms);
     }
+    if (ImGui::Checkbox("Sound##hover_preview_sound",
+                        &m_pending_hover_preview_sound)) {
+      VideoHoverPreview::preview_sound = m_pending_hover_preview_sound;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Unmute audio in hover preview");
   }
 
   if (ImGui::CollapsingHeader("Video Playback",

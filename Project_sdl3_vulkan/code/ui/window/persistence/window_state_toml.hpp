@@ -137,6 +137,7 @@ struct WindowStateToml {
   int video_resume_persist_min_duration_seconds = 30;
   bool hover_preview_enabled = true;
   int  hover_preview_delay_ms = 800;
+  bool hover_preview_sound = false;
   std::string file_explorer_last_directory;
   int file_explorer_sort_mode = 0;
   std::vector<std::string> file_explorer_recent_directories;

@@ -111,7 +111,7 @@ void VideoHoverPreview::init_mpv() {
 
     mpv_set_option_string(m_mpv, "vo", "libmpv");
     mpv_set_option_string(m_mpv, "pause", "yes");
-    mpv_set_option_string(m_mpv, "mute", "yes");
+    mpv_set_option_string(m_mpv, "mute", preview_sound ? "no" : "yes");
     mpv_set_option_string(m_mpv, "loop-file", "inf");
     mpv_set_option_string(m_mpv, "hwdec", "nvdec");
     mpv_set_option_string(m_mpv, "hwdec-codecs", "h264,hevc,av1,vp9,mpeg4,vc1");
@@ -119,6 +119,9 @@ void VideoHoverPreview::init_mpv() {
     mpv_set_option_string(m_mpv, "ytdl-format",
                           "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best");
     mpv_set_option_string(m_mpv, "cache", "no");
+    // Use Lanczos downscaling when the video's native resolution exceeds preview_size.
+    // Only activates when mpv scales *down*; upscaling is unaffected.
+    mpv_set_option_string(m_mpv, "dscale", "lanczos");
 
     mpv_initialize(m_mpv);
 
@@ -157,6 +160,12 @@ void VideoHoverPreview::start_thread() {
 
             if (ev && ev->event_id == MPV_EVENT_VIDEO_RECONFIG) {
                 m_waiting.store(false);
+                int64_t w = 0, h = 0;
+                if (mpv_get_property(m_mpv, "width",  MPV_FORMAT_INT64, &w) == 0 &&
+                    mpv_get_property(m_mpv, "height", MPV_FORMAT_INT64, &h) == 0 &&
+                    w > 0 && h > 0) {
+                    last_source_size = ImVec2{static_cast<float>(w), static_cast<float>(h)};
+                }
             }
 
             if (!m_frame_dirty.exchange(false)) {
@@ -257,6 +266,7 @@ void VideoHoverPreview::start_playback(const std::string &source) {
         load_source(source);
 
     m_playing = source;
+    mpv_set_property_string(m_mpv, "mute", preview_sound ? "no" : "yes");
     mpv_set_property_string(m_mpv, "pause", "no");
 }
 

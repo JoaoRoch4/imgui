@@ -11,6 +11,12 @@ public:
     /// Runtime-mutable: enable/disable the hover preview popup entirely.
     static inline bool enabled = true;
 
+    /// Runtime-mutable: play audio in hover preview (default: muted).
+    static inline bool preview_sound = false;
+
+    /// Last known native resolution of the loaded source (0×0 when unknown).
+    static inline ImVec2 last_source_size = {0.0f, 0.0f};
+
     /// Runtime-mutable: dwell time before the popup appears and mpv starts loading.
     static inline std::chrono::milliseconds hover_delay{300};
 

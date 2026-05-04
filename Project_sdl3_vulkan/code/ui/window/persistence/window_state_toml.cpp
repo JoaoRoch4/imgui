@@ -99,6 +99,8 @@ std::string FieldCommentFor(const std::string &section_name,
     return "# Resume playback position in whole seconds.";
   if (key == "hover_preview_size")
     return "# Video hover preview bounding size (px).";
+  if (key == "hover_preview_sound")
+    return "# Play audio in hover preview (false = muted).";
   if (key == "seek_preview_size")
     return "# Video seek preview bounding size (px).";
   if (key == "image_hover_preview_size")

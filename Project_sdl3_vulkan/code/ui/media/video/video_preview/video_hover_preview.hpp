@@ -7,7 +7,6 @@ class vulkan_context;
 class VideoHoverPreview {
 public:
     static inline ImVec2 preview_size = {1920, 1080};
-    static constexpr size_t max_cache_size = 128;
 
     /// Runtime-mutable: enable/disable the hover preview popup entirely.
     static inline bool enabled = true;
@@ -48,8 +47,6 @@ public:
         VkDescriptorSet descriptor{};
         VkImageLayout layout{VK_IMAGE_LAYOUT_UNDEFINED};
         bool has_frame = false;
-
-        std::list<std::string>::iterator lru_it;
     };
 
     // core
@@ -63,11 +60,9 @@ public:
 
     void flush_pending_upload();
 
-    // cache
-    bool create_slot(const std::string &source);
-    void destroy_slot(const std::string &source);
-    void touch_lru(const std::string &source);
-    void evict_if_needed();
+    // slot (single texture, no LRU cache)
+    bool create_slot();
+    void destroy_slot();
 
     // vulkan
     bool create_shared();
@@ -76,28 +71,20 @@ public:
 private:
     vulkan_context *m_vk{};
 
-    std::unordered_map<std::string, GpuSlot> m_cache;
-    std::list<std::string> m_lru;
+    GpuSlot m_slot{};
+    std::string m_slot_source;
 
     std::string m_current;
     std::string m_playing;
     std::chrono::steady_clock::time_point m_last_load_time{};
     std::chrono::steady_clock::time_point m_last_use_time{};
     std::chrono::steady_clock::time_point m_last_restart_time{};
-    bool m_has_first_preview_frame{false};
     uint64_t m_watchdog_restart_count{0};
     uint64_t m_idle_stop_count{0};
     std::string m_last_restart_source;
 
-    // ---- Hover-dwell delay --------------------------------------------------
-    /// The source string that the cursor is currently resting on.
-    /// This may differ from m_current if the dwell period has not elapsed yet.
     std::string m_hovered_source;
-
-    /// Monotonic timestamp of when the cursor first moved onto m_hovered_source.
-    /// Reset every time the hovered source changes.
     std::chrono::steady_clock::time_point m_hover_start{};
-    // -------------------------------------------------------------------------
 
     mpv_handle *m_mpv{};
     mpv_render_context *m_render{};
